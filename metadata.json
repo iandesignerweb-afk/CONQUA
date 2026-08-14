@@ -1,0 +1,6 @@
+{
+  "name": "Controle de Quadras - Gestão de Visitas",
+  "description": "Sistema web para controle e monitoramento de visitas em quadras de bairros e cidades com relatórios, dashboard e auditoria.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

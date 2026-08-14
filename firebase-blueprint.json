@@ -1,0 +1,143 @@
+{
+  "entities": {
+    "users": {
+      "title": "users",
+      "description": "User profiles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nome": { "type": "string" },
+        "usuario": { "type": "string" },
+        "email": { "type": "string" },
+        "senha_hash": { "type": "string" },
+        "permissao": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["email", "usuario", "permissao"]
+    },
+    "cidades": {
+      "title": "cidades",
+      "description": "Cities",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nome": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["nome"]
+    },
+    "bairros": {
+      "title": "bairros",
+      "description": "Neighborhoods",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nome": { "type": "string" },
+        "cidade_id": { "type": "string" },
+        "status": { "type": "string" },
+        "total_quadras": { "type": "number" },
+        "quadras_concluidas": { "type": "number" },
+        "percentual_concluido": { "type": "number" },
+        "data_conclusao": { "type": "string" },
+        "observacao": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["nome", "cidade_id"]
+    },
+    "quadras": {
+      "title": "quadras",
+      "description": "Blocks / Quadras",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "numero": { "type": "string" },
+        "bairro_id": { "type": "string" },
+        "status": { "type": "string" },
+        "usuario_id": { "type": "string" },
+        "usuario_nome": { "type": "string" },
+        "data_conclusao": { "type": "string" },
+        "data_atribuicao": { "type": "string" },
+        "observacao": { "type": "string" },
+        "cartao_id": { "type": "string" },
+        "cartao_titulo": { "type": "string" },
+        "cartao_cor": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["numero", "bairro_id"]
+    },
+    "cartoes": {
+      "title": "cartoes",
+      "description": "Territory Cards",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "titulo": { "type": "string" },
+        "cor": { "type": "string" },
+        "observacao": { "type": "string" },
+        "total_quadras": { "type": "number" },
+        "quadras_concluidas": { "type": "number" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["titulo"]
+    },
+    "cartao_quadras": {
+      "title": "cartao_quadras",
+      "description": "Join table for cartao and quadra",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cartao_id": { "type": "string" },
+        "quadra_id": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["cartao_id", "quadra_id"]
+    },
+    "cartao_designacoes": {
+      "title": "cartao_designacoes",
+      "description": "Card assignments to users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cartao_id": { "type": "string" },
+        "usuario_id": { "type": "string" },
+        "usuario_nome": { "type": "string" },
+        "data_designacao": { "type": "string" },
+        "data_devolucao": { "type": "string" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["cartao_id", "usuario_id"]
+    },
+    "historico": {
+      "title": "historico",
+      "description": "Block history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "quadra_id": { "type": "string" },
+        "quadra_numero": { "type": "string" },
+        "bairro_id": { "type": "string" },
+        "bairro_nome": { "type": "string" },
+        "acao": { "type": "string" },
+        "usuario_id": { "type": "string" },
+        "usuario_nome": { "type": "string" },
+        "data_hora": { "type": "string" },
+        "observacao": { "type": "string" }
+      }
+    },
+    "audit_logs": {
+      "title": "audit_logs",
+      "description": "Audit Logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "usuario_id": { "type": "string" },
+        "usuario_nome": { "type": "string" },
+        "acao": { "type": "string" },
+        "detalhe": { "type": "string" },
+        "ip": { "type": "string" },
+        "data_hora": { "type": "string" }
+      }
+    }
+  }
+}
