@@ -174,6 +174,32 @@ export async function findUserByUsernameOrEmail(identifier: string): Promise<any
   );
 }
 
+/**
+ * Sanitiza o objeto de usuário para evitar enviar campos inexistentes na tabela public.users
+ * do Supabase (ex: campos virtuais do frontend como cidade_configurada, cidadeId, etc).
+ */
+function sanitizeUserForSupabase(data: any): any {
+  if (!data || typeof data !== 'object') return {};
+  const sanitized: any = {};
+  const allowedKeys = ['id', 'nome', 'usuario', 'email', 'senha_hash', 'permissao', 'cidade_id', 'cidade_nome', 'created_at', 'updated_at'];
+
+  for (const key of allowedKeys) {
+    if (data[key] !== undefined) {
+      sanitized[key] = data[key];
+    }
+  }
+
+  // Mapeia variações comuns caso cidade_id ou cidade_nome tenham sido passados em camelCase
+  if (sanitized.cidade_id === undefined && data.cidadeId !== undefined) {
+    sanitized.cidade_id = data.cidadeId;
+  }
+  if (sanitized.cidade_nome === undefined && data.cidadeNome !== undefined) {
+    sanitized.cidade_nome = data.cidadeNome;
+  }
+
+  return sanitized;
+}
+
 export async function upsertUserDoc(data: any): Promise<any> {
   const userObj = {
     ...data,
@@ -184,17 +210,37 @@ export async function upsertUserDoc(data: any): Promise<any> {
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
-      const { data: upserted, error } = await supabase
+      const sanitized = sanitizeUserForSupabase(userObj);
+      let { data: upserted, error } = await supabase
         .from('users')
-        .upsert(userObj, { onConflict: 'id' })
+        .upsert(sanitized, { onConflict: 'id' })
         .select()
         .maybeSingle();
 
+      // Se a tabela remota do Supabase não possuir as colunas de cidade ainda, tenta novamente apenas com colunas essenciais
+      if (error && error.message && (error.message.includes('column') || error.message.includes('schema cache'))) {
+        const basicSanitized: any = { id: String(data.id), updated_at: new Date().toISOString() };
+        ['nome', 'usuario', 'email', 'senha_hash', 'permissao'].forEach((k) => {
+          if (sanitized[k] !== undefined) basicSanitized[k] = sanitized[k];
+        });
+        const retryRes = await supabase
+          .from('users')
+          .upsert(basicSanitized, { onConflict: 'id' })
+          .select()
+          .maybeSingle();
+        if (!retryRes.error && retryRes.data) {
+          upserted = retryRes.data;
+          error = null;
+        }
+      }
+
       if (!error && upserted) {
+        const fullObj = { ...userObj, ...upserted };
         const idx = memoryStore.users.findIndex((u) => String(u.id) === String(userObj.id));
-        if (idx !== -1) memoryStore.users[idx] = upserted;
-        else memoryStore.users.push(upserted);
-        return upserted;
+        if (idx !== -1) memoryStore.users[idx] = fullObj;
+        else memoryStore.users.push(fullObj);
+        savePersistedStore();
+        return fullObj;
       }
       if (error) console.warn('[Supabase upsertUser error]', error.message);
     } catch (err) {
@@ -205,9 +251,11 @@ export async function upsertUserDoc(data: any): Promise<any> {
   const idx = memoryStore.users.findIndex((u) => String(u.id) === String(userObj.id));
   if (idx !== -1) {
     memoryStore.users[idx] = { ...memoryStore.users[idx], ...userObj };
+    savePersistedStore();
     return memoryStore.users[idx];
   } else {
     memoryStore.users.push(userObj);
+    savePersistedStore();
     return userObj;
   }
 }
@@ -223,8 +271,27 @@ export async function createUserDoc(data: any): Promise<any> {
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
-      const { data: inserted, error } = await supabase.from('users').insert([userObj]).select().maybeSingle();
-      if (!error && inserted) return inserted;
+      const sanitized = sanitizeUserForSupabase(userObj);
+      let { data: inserted, error } = await supabase.from('users').insert([sanitized]).select().maybeSingle();
+
+      if (error && error.message && (error.message.includes('column') || error.message.includes('schema cache'))) {
+        const basicSanitized: any = { id: newId, created_at: userObj.created_at };
+        ['nome', 'usuario', 'email', 'senha_hash', 'permissao'].forEach((k) => {
+          if (sanitized[k] !== undefined) basicSanitized[k] = sanitized[k];
+        });
+        const retryRes = await supabase.from('users').insert([basicSanitized]).select().maybeSingle();
+        if (!retryRes.error && retryRes.data) {
+          inserted = retryRes.data;
+          error = null;
+        }
+      }
+
+      if (!error && inserted) {
+        const fullObj = { ...userObj, ...inserted };
+        memoryStore.users.push(fullObj);
+        savePersistedStore();
+        return fullObj;
+      }
       if (error) console.warn('[Supabase createUser error]', error.message);
     } catch (err) {
       console.warn('[Supabase createUser error]', err);
@@ -232,6 +299,7 @@ export async function createUserDoc(data: any): Promise<any> {
   }
 
   memoryStore.users.push(userObj);
+  savePersistedStore();
   return userObj;
 }
 
@@ -538,13 +606,32 @@ export async function updateUserDoc(id: string, updates: any): Promise<any> {
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq('id', String(id))
-        .select()
-        .maybeSingle();
-      if (!error && data) return data;
+      const sanitized = sanitizeUserForSupabase(updates);
+      if (Object.keys(sanitized).length > 0) {
+        let { data, error } = await supabase
+          .from('users')
+          .update({ ...sanitized, updated_at: new Date().toISOString() })
+          .eq('id', String(id))
+          .select()
+          .maybeSingle();
+
+        // Se a coluna de cidade não existir remotamente, tenta atualizar apenas campos base
+        if (error && error.message && (error.message.includes('column') || error.message.includes('schema cache'))) {
+          const basicSanitized: any = {};
+          ['nome', 'usuario', 'email', 'senha_hash', 'permissao'].forEach((k) => {
+            if (sanitized[k] !== undefined) basicSanitized[k] = sanitized[k];
+          });
+          if (Object.keys(basicSanitized).length > 0) {
+            const retryRes = await supabase
+              .from('users')
+              .update({ ...basicSanitized, updated_at: new Date().toISOString() })
+              .eq('id', String(id))
+              .select()
+              .maybeSingle();
+            if (!retryRes.error && retryRes.data) data = retryRes.data;
+          }
+        }
+      }
     } catch (err) {
       console.warn('[Supabase updateUser error]', err);
     }
@@ -552,10 +639,14 @@ export async function updateUserDoc(id: string, updates: any): Promise<any> {
 
   const idx = memoryStore.users.findIndex((u) => String(u.id) === String(id));
   if (idx !== -1) {
-    memoryStore.users[idx] = { ...memoryStore.users[idx], ...updates };
+    memoryStore.users[idx] = { ...memoryStore.users[idx], ...updates, updated_at: new Date().toISOString() };
+    savePersistedStore();
     return memoryStore.users[idx];
   }
-  return { id, ...updates };
+  const newUser = { id, ...updates, updated_at: new Date().toISOString() };
+  memoryStore.users.push(newUser);
+  savePersistedStore();
+  return newUser;
 }
 
 export async function deleteUserDoc(id: string): Promise<void> {
@@ -578,6 +669,7 @@ export async function deleteUserDoc(id: string): Promise<void> {
     }
   }
   memoryStore.users = memoryStore.users.filter((u) => String(u.id) !== String(id));
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -624,6 +716,7 @@ export async function createCidadeDoc(data: any): Promise<any> {
   }
 
   memoryStore.cidades.push(cidadeObj);
+  savePersistedStore();
   return cidadeObj;
 }
 
@@ -641,6 +734,7 @@ export async function updateCidadeDoc(id: string, updates: any): Promise<any> {
   const idx = memoryStore.cidades.findIndex((c) => String(c.id) === String(id));
   if (idx !== -1) {
     memoryStore.cidades[idx] = { ...memoryStore.cidades[idx], ...updates };
+    savePersistedStore();
     return memoryStore.cidades[idx];
   }
   return { id, ...updates };
@@ -656,6 +750,7 @@ export async function deleteCidadeDoc(id: string): Promise<void> {
     }
   }
   memoryStore.cidades = memoryStore.cidades.filter((c) => String(c.id) !== String(id));
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -702,6 +797,7 @@ export async function createBairroDoc(data: any): Promise<any> {
   }
 
   memoryStore.bairros.push(bairroObj);
+  savePersistedStore();
   return bairroObj;
 }
 
@@ -719,6 +815,7 @@ export async function updateBairroDoc(id: string, updates: any): Promise<any> {
   const idx = memoryStore.bairros.findIndex((b) => String(b.id) === String(id));
   if (idx !== -1) {
     memoryStore.bairros[idx] = { ...memoryStore.bairros[idx], ...updates };
+    savePersistedStore();
     return memoryStore.bairros[idx];
   }
   return { id, ...updates };
@@ -734,6 +831,7 @@ export async function deleteBairroDoc(id: string): Promise<void> {
     }
   }
   memoryStore.bairros = memoryStore.bairros.filter((b) => String(b.id) !== String(id));
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -780,6 +878,7 @@ export async function createQuadraDoc(data: any): Promise<any> {
   }
 
   memoryStore.quadras.push(quadraObj);
+  savePersistedStore();
   return quadraObj;
 }
 
@@ -801,6 +900,7 @@ export async function bulkCreateQuadrasDocs(inserts: any[]): Promise<any[]> {
   }
 
   memoryStore.quadras.push(...list);
+  savePersistedStore();
   return list;
 }
 
@@ -818,6 +918,7 @@ export async function updateQuadraDoc(id: string, updates: any): Promise<any> {
   const idx = memoryStore.quadras.findIndex((q) => String(q.id) === String(id));
   if (idx !== -1) {
     memoryStore.quadras[idx] = { ...memoryStore.quadras[idx], ...updates };
+    savePersistedStore();
     return memoryStore.quadras[idx];
   }
   return { id, ...updates };
@@ -833,6 +934,7 @@ export async function deleteQuadraDoc(id: string): Promise<void> {
     }
   }
   memoryStore.quadras = memoryStore.quadras.filter((q) => String(q.id) !== String(id));
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -879,6 +981,7 @@ export async function createCartaoDoc(data: any): Promise<any> {
   }
 
   memoryStore.cartoes.push(cartaoObj);
+  savePersistedStore();
   return cartaoObj;
 }
 
@@ -896,6 +999,7 @@ export async function updateCartaoDoc(id: string, updates: any): Promise<any> {
   const idx = memoryStore.cartoes.findIndex((c) => String(c.id) === String(id));
   if (idx !== -1) {
     memoryStore.cartoes[idx] = { ...memoryStore.cartoes[idx], ...updates };
+    savePersistedStore();
     return memoryStore.cartoes[idx];
   }
   return { id, ...updates };
@@ -911,6 +1015,7 @@ export async function deleteCartaoDoc(id: string): Promise<void> {
     }
   }
   memoryStore.cartoes = memoryStore.cartoes.filter((c) => String(c.id) !== String(id));
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -940,6 +1045,7 @@ export async function addCartaoQuadras(joins: { cartao_id: string; quadra_id: st
     }
   }
   memoryStore.cartao_quadras.push(...list);
+  savePersistedStore();
 }
 
 export async function deleteCartaoQuadrasByCartaoId(cartaoId: string): Promise<void> {
@@ -952,6 +1058,7 @@ export async function deleteCartaoQuadrasByCartaoId(cartaoId: string): Promise<v
     }
   }
   memoryStore.cartao_quadras = memoryStore.cartao_quadras.filter((cq) => String(cq.cartao_id) !== String(cartaoId));
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -981,6 +1088,7 @@ export async function addCartaoDesignacoes(rows: any[]): Promise<void> {
     }
   }
   memoryStore.cartao_designacoes.push(...list);
+  savePersistedStore();
 }
 
 export async function deleteCartaoDesignacoesByCartaoId(cartaoId: string): Promise<void> {
@@ -993,6 +1101,7 @@ export async function deleteCartaoDesignacoesByCartaoId(cartaoId: string): Promi
     }
   }
   memoryStore.cartao_designacoes = memoryStore.cartao_designacoes.filter((cd) => String(cd.cartao_id) !== String(cartaoId));
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -1027,6 +1136,7 @@ export async function addHistoricoDocs(entries: any | any[]): Promise<void> {
     }
   }
   memoryStore.historico.push(...list);
+  savePersistedStore();
 }
 
 // -------------------------------------------------------------
@@ -1061,4 +1171,5 @@ export async function addAuditLogDoc(entry: any): Promise<void> {
     }
   }
   memoryStore.audit_logs.push(logObj);
+  savePersistedStore();
 }

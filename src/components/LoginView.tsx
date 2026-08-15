@@ -8,7 +8,6 @@ import {
   User as UserIcon,
   ShieldCheck,
   Building2,
-  KeyRound,
   CheckCircle2,
   AlertCircle,
   HelpCircle,
@@ -132,13 +131,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     } finally {
       setGoogleLoading(false);
     }
-  };
-
-  const fillDemo = (user: string, pass: string) => {
-    setActiveTab('login');
-    setUsuario(user);
-    setSenha(pass);
-    setError(null);
   };
 
   const handleRecoverySubmit = async (e: React.FormEvent) => {
@@ -290,7 +282,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                     type="text"
                     value={usuario}
                     onChange={(e) => setUsuario(e.target.value)}
-                    placeholder="Ex: admin ou admin@quadras.com"
+                    placeholder="Seu usuário ou e-mail"
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-900/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all text-xs sm:text-sm"
                     required
                   />
@@ -482,31 +474,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             </form>
           </div>
         )}
-
-        {/* Demo Credentials Quick Switcher */}
-        <div className="mt-6 pt-5 border-t border-slate-700/60">
-          <p className="text-[11px] font-medium text-slate-400 text-center mb-2.5">
-            Acesso Rápido de Demonstração:
-          </p>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => fillDemo('admin', 'admin123')}
-              className="px-3 py-2 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/60 rounded-lg text-slate-200 transition-colors flex items-center gap-1.5 justify-center cursor-pointer text-[11px]"
-            >
-              <KeyRound className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>Admin</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemo('carlos', 'user123')}
-              className="px-3 py-2 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/60 rounded-lg text-slate-200 transition-colors flex items-center gap-1.5 justify-center cursor-pointer text-[11px]"
-            >
-              <UserIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-              <span>Usuário Comum</span>
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Recovery Modal */}

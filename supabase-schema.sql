@@ -9,11 +9,19 @@ CREATE TABLE IF NOT EXISTS public.users (
   nome TEXT NOT NULL,
   usuario TEXT NOT NULL UNIQUE,
   email TEXT NOT NULL UNIQUE,
-  senha_hash TEXT NOT NULL,
+  senha_hash TEXT NOT NULL DEFAULT '',
   permissao TEXT NOT NULL DEFAULT 'Dirigente',
+  cidade_id TEXT,
+  cidade_nome TEXT,
+  cidade_configurada BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migrações incrementais caso a tabela users já exista no Supabase
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS cidade_id TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS cidade_nome TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS cidade_configurada BOOLEAN DEFAULT false;
 
 -- 2. TABELA DE CIDADES
 CREATE TABLE IF NOT EXISTS public.cidades (
