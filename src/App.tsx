@@ -11,10 +11,12 @@ import { UsuariosView } from './components/UsuariosView';
 import { RelatoriosView } from './components/RelatoriosView';
 import { RegistroTerritoriosView } from './components/RegistroTerritoriosView';
 import { AuditoriaView } from './components/AuditoriaView';
+import { CitySelectionModal } from './components/CitySelectionModal';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [showCityModal, setShowCityModal] = useState<boolean>(false);
 
   // App Layout State
   const [currentTab, setCurrentTab] = useState<NavItem>('dashboard');
@@ -132,12 +134,33 @@ export default function App() {
 
   const pageMeta = getPageTitles();
 
+  // Verifica se o usuário precisa configurar a cidade (onboarding para novos usuários)
+  const isMissingCity =
+    !currentUser.cidadeNome &&
+    !currentUser.cidade_nome &&
+    !currentUser.cidadeConfigurada &&
+    !currentUser.cidade_configurada;
+
   return (
     <div
       className={`min-h-screen font-sans transition-colors duration-200 ${
         darkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-100 text-slate-900'
       }`}
     >
+      {/* Modal obrigatório para novos usuários sem cidade ou sob demanda */}
+      {(isMissingCity || showCityModal) && (
+        <CitySelectionModal
+          currentUser={currentUser}
+          darkMode={darkMode}
+          canDismiss={!isMissingCity}
+          onClose={() => setShowCityModal(false)}
+          onCitySaved={(updatedUser) => {
+            setCurrentUser(updatedUser);
+            setShowCityModal(false);
+          }}
+        />
+      )}
+
       {/* Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}
@@ -151,6 +174,7 @@ export default function App() {
         onToggleTheme={() => setDarkMode(!darkMode)}
         isOpenMobile={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
+        onOpenCityModal={() => setShowCityModal(true)}
       />
 
       {/* Main Content Area */}
@@ -169,6 +193,7 @@ export default function App() {
               setCurrentTab('quadras');
             }
           }}
+          onChangeCity={() => setShowCityModal(true)}
         />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">

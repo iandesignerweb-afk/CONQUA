@@ -6,6 +6,12 @@ export interface User {
   usuario: string;
   email?: string;
   permissao: UserRole;
+  cidadeId?: number | string | null;
+  cidade_id?: number | string | null;
+  cidadeNome?: string | null;
+  cidade_nome?: string | null;
+  cidadeConfigurada?: boolean;
+  cidade_configurada?: boolean;
   createdAt?: string;
 }
 

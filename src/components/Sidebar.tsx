@@ -34,6 +34,7 @@ interface SidebarProps {
   onToggleTheme: () => void;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
+  onOpenCityModal?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -45,8 +46,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleTheme,
   isOpenMobile,
   onCloseMobile,
+  onOpenCityModal,
 }) => {
   const isAdmin = currentUser.permissao === 'Administrador';
+  const cityName = currentUser.cidadeNome || currentUser.cidade_nome;
 
   const navItems = [
     {
@@ -136,24 +139,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* User Info Card */}
-        <div className="p-4 mx-3 my-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-sm shrink-0">
-            {currentUser.nome.charAt(0).toUpperCase()}
+        <div className="p-4 mx-3 my-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 flex flex-col gap-2.5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-sm shrink-0">
+              {currentUser.nome.charAt(0).toUpperCase()}
+            </div>
+            <div className="overflow-hidden flex-1">
+              <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                {currentUser.nome}
+              </p>
+              <span
+                className={`inline-block mt-0.5 px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                  isAdmin
+                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+                    : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                }`}
+              >
+                {currentUser.permissao}
+              </span>
+            </div>
           </div>
-          <div className="overflow-hidden">
-            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-              {currentUser.nome}
-            </p>
-            <span
-              className={`inline-block mt-0.5 px-2 py-0.5 text-[10px] font-semibold rounded-full ${
-                isAdmin
-                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
-                  : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-              }`}
+          {cityName ? (
+            <button
+              onClick={onOpenCityModal}
+              title="Clique para alterar a cidade selecionada"
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all text-left cursor-pointer"
             >
-              {currentUser.permissao}
-            </span>
-          </div>
+              <span className="flex items-center gap-1.5 truncate">
+                <MapPin className="w-3 h-3 shrink-0" />
+                <span className="truncate">{cityName}</span>
+              </span>
+              <span className="text-[10px] text-emerald-500 underline font-normal shrink-0">
+                Trocar
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={onOpenCityModal}
+              className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 transition-all cursor-pointer"
+            >
+              <MapPin className="w-3 h-3" />
+              <span>Definir Cidade</span>
+            </button>
+          )}
         </div>
 
         {/* Navigation Menu */}

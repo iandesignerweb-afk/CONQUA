@@ -1,5 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
 
 // -------------------------------------------------------------
 // SUPABASE CLIENT INITIALIZATION (LAZY & RESILIENT)
@@ -38,8 +40,10 @@ export function getSupabaseClient(): SupabaseClient | null {
 }
 
 // -------------------------------------------------------------
-// IN-MEMORY FALLBACK STORE (Garante funcionamento contínuo)
+// IN-MEMORY & PERSISTENT FALLBACK STORE
 // -------------------------------------------------------------
+const DATA_FILE = path.join(process.cwd(), 'server_data_store.json');
+
 const memoryStore = {
   users: [
     {
@@ -75,6 +79,37 @@ const memoryStore = {
   audit_logs: [] as any[],
   registro_territorios: [] as any[],
 };
+
+// Carrega dados salvos anteriormente se existirem
+function loadPersistedStore() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      const data = JSON.parse(raw);
+      if (data && typeof data === 'object') {
+        Object.keys(data).forEach((key) => {
+          if (Array.isArray(data[key]) && data[key].length > 0) {
+            (memoryStore as any)[key] = data[key];
+          }
+        });
+        console.log('[Persistence] Dados locais carregados de server_data_store.json');
+      }
+    }
+  } catch (err) {
+    console.warn('[Persistence] Erro ao ler server_data_store.json:', err);
+  }
+}
+
+export function savePersistedStore() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(memoryStore, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[Persistence] Erro ao salvar server_data_store.json:', err);
+  }
+}
+
+// Inicializa o carregamento persistente
+loadPersistedStore();
 
 // Helper to generate simple unique IDs
 function generateId(prefix: string = 'id'): string {
@@ -414,7 +449,88 @@ export async function loginUserWithSupabaseAuth(
       usuario: user.usuario,
       email: user.email,
       permissao: user.permissao,
+      cidade_id: user.cidade_id || user.cidadeId || null,
+      cidadeId: user.cidade_id || user.cidadeId || null,
+      cidade_nome: user.cidade_nome || user.cidadeNome || null,
+      cidadeNome: user.cidade_nome || user.cidadeNome || null,
+      cidade_configurada: user.cidade_configurada ?? (!!user.cidade_nome || !!user.cidadeNome),
+      cidadeConfigurada: user.cidade_configurada ?? (!!user.cidade_nome || !!user.cidadeNome),
     },
+  };
+}
+
+/**
+ * Define ou atualiza a cidade do usuário.
+ * Cria a cidade se não existir e garante que a cidade tenha pelo menos um bairro padrão (Centro).
+ */
+export async function setUserCity(
+  userId: string,
+  cidadeNome: string,
+  cidadeId?: string
+): Promise<{ user: any; cidade: any }> {
+  const cleanNome = String(cidadeNome || '').trim();
+  if (!cleanNome) {
+    throw new Error('O nome da cidade não pode ser vazio.');
+  }
+
+  const cidades = await getCidades();
+  let targetCidade: any = null;
+
+  if (cidadeId) {
+    targetCidade = cidades.find((c: any) => String(c.id) === String(cidadeId));
+  }
+
+  if (!targetCidade) {
+    targetCidade = cidades.find(
+      (c: any) => (c.nome || '').toLowerCase().trim() === cleanNome.toLowerCase()
+    );
+  }
+
+  if (!targetCidade) {
+    targetCidade = await createCidadeDoc({
+      nome: cleanNome,
+      estado: 'SP',
+    });
+  }
+
+  // Garantir que a cidade possui pelo menos um bairro para organização dos territórios
+  const bairros = await getBairros();
+  const cityBairros = bairros.filter((b: any) => String(b.cidade_id) === String(targetCidade.id));
+  if (cityBairros.length === 0) {
+    await createBairroDoc({
+      cidade_id: String(targetCidade.id),
+      nome: 'Centro',
+      status: 'Não Iniciado',
+      total_quadras: 0,
+      quadras_concluidas: 0,
+      percentual_concluido: 0,
+    });
+  }
+
+  // Atualiza o documento do usuário
+  const userUpdates = {
+    cidade_id: String(targetCidade.id),
+    cidade_nome: targetCidade.nome,
+    cidade_configurada: true,
+  };
+
+  const updatedUser = await updateUserDoc(String(userId), userUpdates);
+
+  return {
+    user: {
+      id: updatedUser.id,
+      nome: updatedUser.nome,
+      usuario: updatedUser.usuario,
+      email: updatedUser.email,
+      permissao: updatedUser.permissao,
+      cidade_id: targetCidade.id,
+      cidadeId: targetCidade.id,
+      cidade_nome: targetCidade.nome,
+      cidadeNome: targetCidade.nome,
+      cidade_configurada: true,
+      cidadeConfigurada: true,
+    },
+    cidade: targetCidade,
   };
 }
 

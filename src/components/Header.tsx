@@ -1,6 +1,6 @@
 import React from 'react';
 import { User } from '../types';
-import { Menu, Search, Sun, Moon, Shield } from 'lucide-react';
+import { Menu, Search, Sun, Moon, Shield, MapPin } from 'lucide-react';
 
 interface HeaderProps {
   title: string;
@@ -11,6 +11,7 @@ interface HeaderProps {
   onToggleTheme: () => void;
   searchTerm: string;
   onSearchChange: (value: string) => void;
+  onChangeCity?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -22,7 +23,10 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleTheme,
   searchTerm,
   onSearchChange,
+  onChangeCity,
 }) => {
+  const currentCityName = currentUser.cidadeNome || currentUser.cidade_nome;
+
   return (
     <header
       className={`sticky top-0 z-30 px-4 lg:px-8 py-3.5 border-b backdrop-blur-md transition-colors ${
@@ -42,9 +46,21 @@ export const Header: React.FC<HeaderProps> = ({
             <Menu className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-lg md:text-xl font-bold tracking-tight">
-              {title}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg md:text-xl font-bold tracking-tight">
+                {title}
+              </h1>
+              {currentCityName && (
+                <button
+                  onClick={onChangeCity}
+                  title="Clique para alterar ou selecionar outra cidade"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all cursor-pointer"
+                >
+                  <MapPin className="w-3 h-3" />
+                  <span>{currentCityName}</span>
+                </button>
+              )}
+            </div>
             {subtitle && (
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {subtitle}
@@ -101,3 +117,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+

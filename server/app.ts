@@ -43,6 +43,7 @@ import {
   addHistoricoDocs,
   getAuditLogs,
   addAuditLogDoc,
+  setUserCity,
 } from './supabaseServer.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'controle_de_quadras_supabase_secret_2026';
@@ -54,6 +55,12 @@ export interface AuthRequest extends Request {
     nome: string;
     email?: string;
     permissao: 'Administrador' | 'Dirigente' | 'Usuário comum';
+    cidade_id?: string | number | null;
+    cidadeId?: string | number | null;
+    cidade_nome?: string | null;
+    cidadeNome?: string | null;
+    cidade_configurada?: boolean;
+    cidadeConfigurada?: boolean;
   };
 }
 
@@ -139,16 +146,46 @@ const authenticateToken = async (
       userDoc = await findUserByUsernameOrEmail(decoded.email);
     }
 
+    if (!userDoc && decoded.usuario) {
+      userDoc = await findUserByUsernameOrEmail(decoded.usuario);
+    }
+
+    // Se o token for válido e assinado pelo servidor, mas o usuário não foi encontrado em memória (ex: reinício do servidor), reconstrói o usuário
+    if (!userDoc && decoded.id) {
+      const fallbackUsername = decoded.usuario || (decoded.email ? decoded.email.split('@')[0] : 'usuario');
+      userDoc = {
+        id: String(decoded.id),
+        nome: decoded.nome || fallbackUsername,
+        usuario: fallbackUsername,
+        email: decoded.email || `${fallbackUsername}@quadras.com`,
+        permissao: decoded.permissao || 'Usuário comum',
+        cidade_id: decoded.cidade_id || decoded.cidadeId || null,
+        cidade_nome: decoded.cidade_nome || decoded.cidadeNome || null,
+        cidade_configurada: !!(decoded.cidade_nome || decoded.cidadeNome || decoded.cidade_configurada),
+        created_at: new Date().toISOString(),
+      };
+      await upsertUserDoc(userDoc);
+    }
+
     if (!userDoc) {
       return res.status(401).json({ error: 'Sessão expirada ou inválida. Faça login novamente.' });
     }
 
+    const hasCity = !!(userDoc.cidade_nome || userDoc.cidadeNome);
+    const cityConfigured = userDoc.cidade_configurada ?? hasCity;
+
     req.user = {
       id: userDoc.id,
       usuario: userDoc.usuario,
-      nome: userDoc.nome,
+      nome: userDoc.nome || userDoc.usuario,
       email: userDoc.email,
-      permissao: userDoc.permissao,
+      permissao: userDoc.permissao || 'Usuário comum',
+      cidade_id: userDoc.cidade_id || userDoc.cidadeId || null,
+      cidadeId: userDoc.cidade_id || userDoc.cidadeId || null,
+      cidade_nome: userDoc.cidade_nome || userDoc.cidadeNome || null,
+      cidadeNome: userDoc.cidade_nome || userDoc.cidadeNome || null,
+      cidade_configurada: cityConfigured,
+      cidadeConfigurada: cityConfigured,
     };
 
     return next();
@@ -189,9 +226,9 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     const user = loginResult.user;
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, usuario: user.usuario, permissao: user.permissao },
+      { id: user.id, email: user.email, usuario: user.usuario, permissao: user.permissao, nome: user.nome },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     await addAuditLog(user.id, user.nome, 'Login', `Usuário ${user.usuario} realizou login.`, req.ip);
@@ -204,6 +241,12 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
         usuario: user.usuario,
         email: user.email,
         permissao: user.permissao,
+        cidade_id: user.cidade_id || user.cidadeId || null,
+        cidadeId: user.cidade_id || user.cidadeId || null,
+        cidade_nome: user.cidade_nome || user.cidadeNome || null,
+        cidadeNome: user.cidade_nome || user.cidadeNome || null,
+        cidade_configurada: user.cidade_configurada ?? user.cidadeConfigurada ?? false,
+        cidadeConfigurada: user.cidade_configurada ?? user.cidadeConfigurada ?? false,
       },
     });
   } catch (err: any) {
@@ -215,7 +258,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 // Cadastro de novos usuários (Cria em Supabase Authentication -> Users e salva no public.users com mesmo ID)
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
-    const { usuario, email, senha, confirmarSenha } = req.body;
+    const { usuario, email, senha, confirmarSenha, cidadeNome, cidade_nome } = req.body;
 
     if (!usuario || !email || !senha || !confirmarSenha) {
       return res.status(400).json({ error: 'Todos os campos são obrigatórios para cadastro.' });
@@ -256,12 +299,22 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       permissao,
     });
 
-    const newUser = regResult.user;
+    let newUser = regResult.user;
+
+    const initialCity = cidadeNome || cidade_nome;
+    if (initialCity && String(initialCity).trim()) {
+      try {
+        const cityRes = await setUserCity(String(newUser.id), String(initialCity).trim());
+        newUser = cityRes.user;
+      } catch (cErr) {
+        console.warn('Erro ao associar cidade inicial durante cadastro:', cErr);
+      }
+    }
 
     const token = jwt.sign(
-      { id: newUser.id, email: newUser.email, usuario: newUser.usuario, permissao: newUser.permissao },
+      { id: newUser.id, email: newUser.email, usuario: newUser.usuario, permissao: newUser.permissao, nome: newUser.nome },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     await addAuditLog(newUser.id, newUser.nome, 'Cadastro', `Novo usuário ${newUser.usuario} cadastrado via Supabase Auth.`, req.ip);
@@ -274,6 +327,12 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         usuario: newUser.usuario,
         email: newUser.email,
         permissao: newUser.permissao,
+        cidade_id: newUser.cidade_id || newUser.cidadeId || null,
+        cidadeId: newUser.cidade_id || newUser.cidadeId || null,
+        cidade_nome: newUser.cidade_nome || newUser.cidadeNome || null,
+        cidadeNome: newUser.cidade_nome || newUser.cidadeNome || null,
+        cidade_configurada: newUser.cidade_configurada ?? newUser.cidadeConfigurada ?? false,
+        cidadeConfigurada: newUser.cidade_configurada ?? newUser.cidadeConfigurada ?? false,
       },
     });
   } catch (err: any) {
@@ -307,13 +366,14 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
         email: cleanEmail,
         senha_hash: dummyHash,
         permissao: isFirstUser ? 'Administrador' : 'Usuário comum',
+        cidade_configurada: false,
       });
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, usuario: user.usuario, permissao: user.permissao },
+      { id: user.id, email: user.email, usuario: user.usuario, permissao: user.permissao, nome: user.nome },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
 
     await addAuditLog(user.id, user.nome, 'Login Google', `Usuário ${user.usuario} logou via Google.`, req.ip);
@@ -326,11 +386,72 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
         usuario: user.usuario,
         email: user.email,
         permissao: user.permissao,
+        cidade_id: user.cidade_id || user.cidadeId || null,
+        cidadeId: user.cidade_id || user.cidadeId || null,
+        cidade_nome: user.cidade_nome || user.cidadeNome || null,
+        cidadeNome: user.cidade_nome || user.cidadeNome || null,
+        cidade_configurada: user.cidade_configurada ?? (!!user.cidade_nome || !!user.cidadeNome),
+        cidadeConfigurada: user.cidade_configurada ?? (!!user.cidade_nome || !!user.cidadeNome),
       },
     });
   } catch (err: any) {
     console.error('Erro na autenticação com Google:', err);
     return res.status(500).json({ error: 'Erro interno na autenticação com Google: ' + err.message });
+  }
+});
+
+// Endpoint para o usuário configurar / salvar sua cidade
+app.post('/api/auth/cidade', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { cidadeNome, nomeCidade, cidadeId, cidade_id } = req.body;
+    const targetNome = cidadeNome || nomeCidade;
+    const targetId = cidadeId || cidade_id;
+
+    if (!targetNome || !String(targetNome).trim()) {
+      return res.status(400).json({ error: 'O nome da cidade é obrigatório.' });
+    }
+
+    const result = await setUserCity(String(req.user!.id), String(targetNome).trim(), targetId);
+
+    await addAuditLog(
+      req.user!.id,
+      req.user!.nome,
+      'Configurou Cidade',
+      `Usuário ${req.user!.usuario} definiu a sua cidade como "${result.cidade.nome}".`,
+      req.ip
+    );
+
+    return res.json({
+      message: 'Cidade configurada com sucesso.',
+      user: result.user,
+      cidade: result.cidade,
+    });
+  } catch (err: any) {
+    console.error('Erro ao configurar cidade:', err);
+    return res.status(500).json({ error: 'Erro ao configurar cidade: ' + err.message });
+  }
+});
+
+// Alias PUT /api/users/minha-cidade
+app.put('/api/users/minha-cidade', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { cidadeNome, nomeCidade, cidadeId, cidade_id } = req.body;
+    const targetNome = cidadeNome || nomeCidade;
+    const targetId = cidadeId || cidade_id;
+
+    if (!targetNome || !String(targetNome).trim()) {
+      return res.status(400).json({ error: 'O nome da cidade é obrigatório.' });
+    }
+
+    const result = await setUserCity(String(req.user!.id), String(targetNome).trim(), targetId);
+
+    return res.json({
+      message: 'Cidade atualizada com sucesso.',
+      user: result.user,
+      cidade: result.cidade,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Erro ao atualizar cidade: ' + err.message });
   }
 });
 

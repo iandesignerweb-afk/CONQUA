@@ -189,6 +189,13 @@ export const api = {
     });
   },
 
+  setUserCity: async (data: { cidadeNome: string; cidadeId?: string | number }) => {
+    return request<{ message: string; user: User; cidade: Cidade }>('/api/auth/cidade', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   // Users (Admin)
   getUsers: async () => request<User[]>('/api/users'),
   createUser: async (user: Omit<User, 'id'> & { senha: string }) =>
