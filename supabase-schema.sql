@@ -118,3 +118,34 @@ CREATE INDEX IF NOT EXISTS idx_quadras_bairro ON public.quadras (bairro_id);
 CREATE INDEX IF NOT EXISTS idx_quadras_cartao ON public.quadras (cartao_id);
 CREATE INDEX IF NOT EXISTS idx_cartoes_usuario ON public.cartoes (usuario_id);
 CREATE INDEX IF NOT EXISTS idx_designacoes_usuario ON public.designacoes (usuario_id);
+
+-- ==============================================================================
+-- (OPCIONAL) TRIGGER AUTOMÁTICO PARA SINCRONIZAR auth.users COM public.users
+-- Executa automaticamente quando um usuário for criado no Supabase Auth
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.users (id, nome, usuario, email, permissao, created_at, updated_at)
+  VALUES (
+    NEW.id::text,
+    COALESCE(NEW.raw_user_meta_data->>'nome', split_part(NEW.email, '@', 1)),
+    COALESCE(NEW.raw_user_meta_data->>'usuario', split_part(NEW.email, '@', 1)),
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'permissao', 'Usuário comum'),
+    NOW(),
+    NOW()
+  )
+  ON CONFLICT (id) DO UPDATE
+  SET email = EXCLUDED.email,
+      updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Ativar trigger caso ainda não exista
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
+

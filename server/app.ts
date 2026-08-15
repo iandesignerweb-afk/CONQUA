@@ -7,6 +7,9 @@ import {
   getUserById,
   findUserByUsernameOrEmail,
   createUserDoc,
+  upsertUserDoc,
+  registerUserWithSupabaseAuth,
+  loginUserWithSupabaseAuth,
   updateUserDoc,
   deleteUserDoc,
   getCidades,
@@ -165,7 +168,7 @@ const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
 // ROTAS DE AUTENTICAÇÃO
 // -------------------------------------------------------------
 
-// Login tradicional com Usuário / E-mail e Senha (SUPABASE READY)
+// Login tradicional com Usuário / E-mail e Senha (SUPABASE AUTH INTEGRATED)
 app.post('/api/auth/login', async (req: Request, res: Response) => {
   try {
     const { usuario, senha } = req.body;
@@ -176,22 +179,14 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     const cleanInput = String(usuario).trim();
     const cleanSenha = String(senha).trim();
 
-    let user = await findUserByUsernameOrEmail(cleanInput);
-
     // Fallback: If user is admin/admin123 and not found yet, ensure seeded
-    if (!user && (cleanInput.toLowerCase() === 'admin' || cleanInput.toLowerCase() === 'admin@quadras.com')) {
+    if (cleanInput.toLowerCase() === 'admin' || cleanInput.toLowerCase() === 'admin@quadras.com') {
       await seedDefaultUsers();
-      user = await findUserByUsernameOrEmail(cleanInput);
     }
 
-    if (!user) {
-      return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
-    }
-
-    const validPassword = bcrypt.compareSync(cleanSenha, user.senha_hash || '');
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
-    }
+    // Realiza login no Supabase Auth e sincroniza com a base de dados
+    const loginResult = await loginUserWithSupabaseAuth(cleanInput, cleanSenha);
+    const user = loginResult.user;
 
     const token = jwt.sign(
       { id: user.id, email: user.email, usuario: user.usuario, permissao: user.permissao },
@@ -213,11 +208,11 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('Erro no login Supabase:', err);
-    return res.status(500).json({ error: 'Erro interno ao realizar login: ' + err.message });
+    return res.status(401).json({ error: err.message || 'Usuário ou senha incorretos.' });
   }
 });
 
-// Cadastro de novos usuários
+// Cadastro de novos usuários (Cria em Supabase Authentication -> Users e salva no public.users com mesmo ID)
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
     const { usuario, email, senha, confirmarSenha } = req.body;
@@ -234,13 +229,13 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'A senha deve ter no mínimo 6 caracteres.' });
     }
 
-    const cleanUsername = String(usuario).trim();
+    const cleanUsername = String(usuario).trim().replace(/^@/, '');
     const cleanEmail = String(email).trim().toLowerCase();
     const cleanSenha = String(senha).trim();
 
     const existingUser = await findUserByUsernameOrEmail(cleanUsername);
     if (existingUser) {
-      return res.status(400).json({ error: 'Este nome de usuário ou e-mail já está em uso.' });
+      return res.status(400).json({ error: 'Este nome de usuário já está em uso.' });
     }
 
     const existingEmail = await findUserByUsernameOrEmail(cleanEmail);
@@ -250,15 +245,18 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 
     const allUsers = await getUsers();
     const isFirstUser = allUsers.length === 0;
+    const permissao = isFirstUser ? 'Administrador' : 'Usuário comum';
 
-    const hash = bcrypt.hashSync(cleanSenha, 10);
-    const newUser = await createUserDoc({
+    // Cria o usuário em Supabase Authentication (auth.users) e salva em public.users com o auth user ID
+    const regResult = await registerUserWithSupabaseAuth({
       nome: cleanUsername,
       usuario: cleanUsername,
       email: cleanEmail,
-      senha_hash: hash,
-      permissao: isFirstUser ? 'Administrador' : 'Usuário comum',
+      senha: cleanSenha,
+      permissao,
     });
+
+    const newUser = regResult.user;
 
     const token = jwt.sign(
       { id: newUser.id, email: newUser.email, usuario: newUser.usuario, permissao: newUser.permissao },
@@ -266,7 +264,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       { expiresIn: '7d' }
     );
 
-    await addAuditLog(newUser.id, newUser.nome, 'Cadastro', `Novo usuário ${newUser.usuario} cadastrado.`, req.ip);
+    await addAuditLog(newUser.id, newUser.nome, 'Cadastro', `Novo usuário ${newUser.usuario} cadastrado via Supabase Auth.`, req.ip);
 
     return res.status(201).json({
       token,
@@ -279,15 +277,15 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       },
     });
   } catch (err: any) {
-    console.error('Erro no cadastro:', err);
-    return res.status(500).json({ error: 'Erro interno ao processar cadastro: ' + err.message });
+    console.error('Erro no cadastro Supabase:', err);
+    return res.status(400).json({ error: err.message || 'Erro interno ao processar cadastro.' });
   }
 });
 
 // Autenticação com Google
 app.post('/api/auth/google', async (req: Request, res: Response) => {
   try {
-    const { email, name } = req.body;
+    const { email, name, uid } = req.body;
     if (!email) {
       return res.status(400).json({ error: 'E-mail é obrigatório para autenticação do Google.' });
     }
@@ -302,7 +300,8 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
       const baseUsername = cleanEmail.split('@')[0];
 
       const dummyHash = bcrypt.hashSync('GoogleAuth_' + Date.now(), 10);
-      user = await createUserDoc({
+      user = await upsertUserDoc({
+        id: uid || undefined,
         nome: baseName,
         usuario: baseUsername,
         email: cleanEmail,
@@ -425,17 +424,24 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req: AuthRequest,
 
     const existing = await findUserByUsernameOrEmail(cleanUsuario);
     if (existing) {
-      return res.status(400).json({ error: 'Já existe um usuário com esse nome de login ou e-mail.' });
+      return res.status(400).json({ error: 'Já existe um usuário com esse nome de login.' });
     }
 
-    const hash = bcrypt.hashSync(String(senha).trim(), 10);
-    const newUser = await createUserDoc({
+    const existingEmail = await findUserByUsernameOrEmail(cleanEmail);
+    if (existingEmail) {
+      return res.status(400).json({ error: 'Já existe um usuário com esse e-mail cadastrado.' });
+    }
+
+    // Registra na Autenticação do Supabase e salva na tabela public.users
+    const regResult = await registerUserWithSupabaseAuth({
       nome: cleanNome,
       usuario: cleanUsuario,
       email: cleanEmail,
-      senha_hash: hash,
+      senha: String(senha).trim(),
       permissao: cleanPermissao,
     });
+
+    const newUser = regResult.user;
 
     await addAuditLog(req.user!.id, req.user!.nome, 'Criou Usuário', `Criou o usuário ${newUser.usuario} (${newUser.nome}).`, req.ip);
 
@@ -447,7 +453,7 @@ app.post('/api/users', authenticateToken, requireAdmin, async (req: AuthRequest,
       permissao: newUser.permissao,
     });
   } catch (err: any) {
-    return res.status(500).json({ error: 'Erro ao criar usuário: ' + err.message });
+    return res.status(400).json({ error: 'Erro ao criar usuário: ' + err.message });
   }
 });
 

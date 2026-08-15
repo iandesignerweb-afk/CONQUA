@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import bcrypt from 'bcryptjs';
 
 // -------------------------------------------------------------
 // SUPABASE CLIENT INITIALIZATION (LAZY & RESILIENT)
@@ -81,7 +82,7 @@ function generateId(prefix: string = 'id'): string {
 }
 
 // -------------------------------------------------------------
-// USERS CRUD
+// USERS CRUD & SUPABASE AUTH INTEGRATION
 // -------------------------------------------------------------
 export async function getUsers(): Promise<any[]> {
   const supabase = getSupabaseClient();
@@ -138,6 +139,44 @@ export async function findUserByUsernameOrEmail(identifier: string): Promise<any
   );
 }
 
+export async function upsertUserDoc(data: any): Promise<any> {
+  const userObj = {
+    ...data,
+    id: String(data.id),
+    updated_at: new Date().toISOString(),
+  };
+
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data: upserted, error } = await supabase
+        .from('users')
+        .upsert(userObj, { onConflict: 'id' })
+        .select()
+        .maybeSingle();
+
+      if (!error && upserted) {
+        const idx = memoryStore.users.findIndex((u) => String(u.id) === String(userObj.id));
+        if (idx !== -1) memoryStore.users[idx] = upserted;
+        else memoryStore.users.push(upserted);
+        return upserted;
+      }
+      if (error) console.warn('[Supabase upsertUser error]', error.message);
+    } catch (err) {
+      console.warn('[Supabase upsertUser error]', err);
+    }
+  }
+
+  const idx = memoryStore.users.findIndex((u) => String(u.id) === String(userObj.id));
+  if (idx !== -1) {
+    memoryStore.users[idx] = { ...memoryStore.users[idx], ...userObj };
+    return memoryStore.users[idx];
+  } else {
+    memoryStore.users.push(userObj);
+    return userObj;
+  }
+}
+
 export async function createUserDoc(data: any): Promise<any> {
   const newId = data.id ? String(data.id) : generateId('usr');
   const userObj = {
@@ -159,6 +198,224 @@ export async function createUserDoc(data: any): Promise<any> {
 
   memoryStore.users.push(userObj);
   return userObj;
+}
+
+/**
+ * Cadastra o usuário no Supabase Authentication (auth.users)
+ * e salva os dados complementares na tabela public.users vinculado pelo auth user ID
+ */
+export async function registerUserWithSupabaseAuth({
+  nome,
+  usuario,
+  email,
+  senha,
+  permissao = 'Usuário comum',
+}: {
+  nome: string;
+  usuario: string;
+  email: string;
+  senha: string;
+  permissao?: string;
+}): Promise<{ user: any; authUser?: any }> {
+  const supabase = getSupabaseClient();
+  const cleanEmail = String(email).trim().toLowerCase();
+  const cleanUsuario = String(usuario).trim().replace(/^@/, '');
+  const cleanNome = String(nome).trim();
+  const cleanSenha = String(senha).trim();
+
+  let authUserId: string | null = null;
+  let authUserObj: any = null;
+
+  if (supabase) {
+    try {
+      // 1. Tentar criar via Admin API (caso tenha service_role key)
+      let adminCreated = false;
+      if (supabase.auth?.admin?.createUser) {
+        try {
+          const { data: adminData, error: adminErr } = await supabase.auth.admin.createUser({
+            email: cleanEmail,
+            password: cleanSenha,
+            email_confirm: true,
+            user_metadata: {
+              nome: cleanNome,
+              usuario: cleanUsuario,
+              permissao: permissao,
+            },
+          });
+
+          if (!adminErr && adminData?.user) {
+            authUserId = adminData.user.id;
+            authUserObj = adminData.user;
+            adminCreated = true;
+            console.log('[Supabase Auth Admin] Usuário criado com sucesso em Authentication -> Users:', authUserId);
+          } else if (adminErr) {
+            console.log('[Supabase Auth Admin info]', adminErr.message);
+          }
+        } catch (_adminEx) {
+          // Continua para o signUp padrão
+        }
+      }
+
+      // 2. Se não criado pelo Admin, usar supabase.auth.signUp()
+      if (!adminCreated) {
+        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: cleanSenha,
+          options: {
+            data: {
+              nome: cleanNome,
+              usuario: cleanUsuario,
+              permissao: permissao,
+            },
+          },
+        });
+
+        if (signUpErr) {
+          console.warn('[Supabase auth.signUp error]', signUpErr.message);
+          if (signUpErr.message.toLowerCase().includes('already registered')) {
+            const existingInDb = await findUserByUsernameOrEmail(cleanEmail);
+            if (existingInDb) {
+              throw new Error('Este e-mail já está cadastrado no sistema.');
+            }
+          } else {
+            throw new Error(signUpErr.message);
+          }
+        } else if (signUpData?.user) {
+          authUserId = signUpData.user.id;
+          authUserObj = signUpData.user;
+          console.log('[Supabase auth.signUp] Usuário criado com sucesso em Authentication -> Users:', authUserId);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Supabase Auth register exception]', err.message);
+      if (err.message && (err.message.includes('already') || err.message.includes('password') || err.message.includes('email') || err.message.includes('cadastrado'))) {
+        throw err;
+      }
+    }
+  }
+
+  // 3. Salvar os dados na tabela customizada public.users vinculando pelo ID retornado da Autenticação
+  const finalId = authUserId || generateId('usr');
+  const hash = bcrypt.hashSync(cleanSenha, 10);
+
+  const userRecord = {
+    id: finalId,
+    nome: cleanNome,
+    usuario: cleanUsuario,
+    email: cleanEmail,
+    senha_hash: hash,
+    permissao: permissao,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const savedUser = await upsertUserDoc(userRecord);
+  return { user: savedUser, authUser: authUserObj };
+}
+
+/**
+ * Autentica o usuário pelo Supabase Auth (auth.users) e sincroniza com a tabela public.users
+ */
+export async function loginUserWithSupabaseAuth(
+  identifier: string,
+  senha: string
+): Promise<{ user: any; supabaseSession?: any }> {
+  const cleanInput = String(identifier || '').trim();
+  const cleanSenha = String(senha || '').trim();
+  const supabase = getSupabaseClient();
+
+  // 1. Localizar registro na tabela public.users ou memória
+  let user = await findUserByUsernameOrEmail(cleanInput);
+
+  // Determinar o e-mail para autenticação no Supabase Auth
+  let emailToAuth = user?.email || (cleanInput.includes('@') ? cleanInput.toLowerCase() : null);
+
+  let supabaseAuthSuccess = false;
+  let authUserData: any = null;
+
+  // 2. Tentar autenticação via Supabase Auth
+  if (supabase && emailToAuth) {
+    try {
+      const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+        email: emailToAuth,
+        password: cleanSenha,
+      });
+
+      if (!authErr && authData?.user) {
+        supabaseAuthSuccess = true;
+        authUserData = authData.user;
+        console.log('[Supabase Auth] Login com sucesso em auth.users para:', authUserData.email);
+
+        // Se o usuário não existir no public.users ou tiver id diferente, sincronizar com o ID da autenticação
+        if (!user || String(user.id) !== String(authUserData.id)) {
+          const syncedUser = {
+            id: authUserData.id,
+            nome: user?.nome || authUserData.user_metadata?.nome || authUserData.email?.split('@')[0] || 'Usuário',
+            usuario: user?.usuario || authUserData.user_metadata?.usuario || authUserData.email?.split('@')[0] || 'usuario',
+            email: authUserData.email || emailToAuth,
+            senha_hash: user?.senha_hash || bcrypt.hashSync(cleanSenha, 10),
+            permissao: user?.permissao || authUserData.user_metadata?.permissao || 'Usuário comum',
+          };
+          user = await upsertUserDoc(syncedUser);
+        }
+      } else {
+        if (authErr) {
+          console.warn('[Supabase auth.signInWithPassword]', authErr.message);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Supabase auth.signIn error]', err.message);
+    }
+  }
+
+  // 3. Validação de fallback caso o usuário tenha sido cadastrado localmente ou bcrypt hash
+  if (!supabaseAuthSuccess) {
+    if (!user) {
+      if (cleanInput.toLowerCase() === 'admin' || cleanInput.toLowerCase() === 'admin@quadras.com') {
+        user = memoryStore.users.find((u) => u.usuario === 'admin');
+      }
+    }
+
+    if (!user) {
+      throw new Error('Usuário ou senha incorretos.');
+    }
+
+    const validPassword = bcrypt.compareSync(cleanSenha, user.senha_hash || '');
+    if (!validPassword) {
+      throw new Error('Usuário ou senha incorretos.');
+    }
+
+    // Se as credenciais locais bateram mas o usuário ainda não estava no auth.users do Supabase,
+    // registrá-lo automaticamente no Supabase Auth para futuras sessões
+    if (supabase && user.email) {
+      try {
+        await supabase.auth.signUp({
+          email: user.email,
+          password: cleanSenha,
+          options: {
+            data: {
+              nome: user.nome,
+              usuario: user.usuario,
+              permissao: user.permissao,
+            },
+          },
+        });
+        console.log('[Supabase Auth Sync] Usuário sincronizado automaticamente com Supabase Auth:', user.email);
+      } catch (_syncErr) {
+        // Ignora caso já exista
+      }
+    }
+  }
+
+  return {
+    user: {
+      id: user.id,
+      nome: user.nome,
+      usuario: user.usuario,
+      email: user.email,
+      permissao: user.permissao,
+    },
+  };
 }
 
 export async function updateUserDoc(id: string, updates: any): Promise<any> {
@@ -189,7 +446,17 @@ export async function deleteUserDoc(id: string): Promise<void> {
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
+      // Deletar da tabela public.users
       await supabase.from('users').delete().eq('id', String(id));
+      
+      // Tentar deletar da autenticação caso tenha permissão admin
+      if (supabase.auth?.admin?.deleteUser) {
+        try {
+          await supabase.auth.admin.deleteUser(String(id));
+        } catch (_adminDelErr) {
+          // Permissão pode não estar disponível com anon key
+        }
+      }
     } catch (err) {
       console.warn('[Supabase deleteUser error]', err);
     }
