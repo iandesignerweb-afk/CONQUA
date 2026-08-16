@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Clock,
   User as UserIcon,
-  MapPin,
   Building2,
   History,
   AlertCircle,
@@ -110,20 +109,11 @@ export const QuadraDetailModal: React.FC<QuadraDetailModalProps> = ({
         {/* Content Body */}
         <div className="p-6 space-y-6">
           {/* Location details */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-1">
-                <Building2 className="w-3.5 h-3.5 text-emerald-500" /> Cidade
-              </span>
-              <p className="text-sm font-bold truncate">{quadra.cidadeNome}</p>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-1">
-                <MapPin className="w-3.5 h-3.5 text-emerald-500" /> Bairro
-              </span>
-              <p className="text-sm font-bold truncate">{quadra.bairroNome}</p>
-            </div>
+          <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-1">
+              <Building2 className="w-3.5 h-3.5 text-emerald-500" /> Cidade / Município
+            </span>
+            <p className="text-sm font-bold truncate">{quadra.cidadeNome || 'Município'}</p>
           </div>
 
           {/* Execution details */}

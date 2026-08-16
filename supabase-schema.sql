@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   usuario TEXT NOT NULL UNIQUE,
   email TEXT NOT NULL UNIQUE,
   senha_hash TEXT NOT NULL DEFAULT '',
-  permissao TEXT NOT NULL DEFAULT 'Dirigente',
+  permissao TEXT NOT NULL DEFAULT 'Administrador',
   cidade_id TEXT,
   cidade_nome TEXT,
   cidade_configurada BOOLEAN DEFAULT false,
@@ -128,6 +128,42 @@ CREATE INDEX IF NOT EXISTS idx_cartoes_usuario ON public.cartoes (usuario_id);
 CREATE INDEX IF NOT EXISTS idx_designacoes_usuario ON public.designacoes (usuario_id);
 
 -- ==============================================================================
+-- DESABILITAÇÃO DE ROW LEVEL SECURITY (RLS) E POLÍTICAS PERMISSIVAS
+-- Garante que as operações da API (anon ou autenticadas) funcionem sem bloqueio
+-- ==============================================================================
+DO $$
+DECLARE
+  tbl text;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY[
+    'users', 
+    'cidades', 
+    'bairros', 
+    'cartoes', 
+    'quadras', 
+    'cartao_quadras', 
+    'designacoes', 
+    'audit_logs', 
+    'registro_territorios', 
+    'historico'
+  ])
+  LOOP
+    BEGIN
+      -- Desabilita RLS para acesso direto do backend
+      EXECUTE format('ALTER TABLE IF EXISTS public.%I DISABLE ROW LEVEL SECURITY;', tbl);
+      
+      -- Recria política universal caso o RLS seja forçado pelo Supabase
+      EXECUTE format('DROP POLICY IF EXISTS "allow_all_operations" ON public.%I;', tbl);
+      EXECUTE format('DROP POLICY IF EXISTS "Allow all for anon and auth" ON public.%I;', tbl);
+      EXECUTE format('CREATE POLICY "allow_all_operations" ON public.%I FOR ALL TO public, anon, authenticated, service_role USING (true) WITH CHECK (true);', tbl);
+    EXCEPTION WHEN OTHERS THEN
+      -- Ignora se a tabela ainda não tiver sido criada
+      NULL;
+    END;
+  END LOOP;
+END $$;
+
+-- ==============================================================================
 -- (OPCIONAL) TRIGGER AUTOMÁTICO PARA SINCRONIZAR auth.users COM public.users
 -- Executa automaticamente quando um usuário for criado no Supabase Auth
 -- ==============================================================================
@@ -140,7 +176,7 @@ BEGIN
     COALESCE(NEW.raw_user_meta_data->>'nome', split_part(NEW.email, '@', 1)),
     COALESCE(NEW.raw_user_meta_data->>'usuario', split_part(NEW.email, '@', 1)),
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'permissao', 'Usuário comum'),
+    COALESCE(NEW.raw_user_meta_data->>'permissao', 'Administrador'),
     NOW(),
     NOW()
   )

@@ -988,7 +988,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
             <p className="text-xs text-slate-400">
               Tem certeza que deseja excluir o cartão{' '}
               <strong className="text-white">"{cartaoToDelete.titulo}"</strong>? Esta
-              ação removerá a vinculação do cartão, mas não excluirá as quadras cadastradas.
+              ação excluirá o cartão e removerá suas respectivas quadras vinculadas.
             </p>
 
             {deleteError && (

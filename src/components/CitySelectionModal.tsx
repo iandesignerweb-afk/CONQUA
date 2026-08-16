@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { api } from '../services/api';
-import { Cidade, User } from '../types';
+import { User } from '../types';
 import {
   MapPin,
   Building2,
@@ -8,8 +8,6 @@ import {
   Sparkles,
   ArrowRight,
   AlertCircle,
-  Search,
-  Plus,
 } from 'lucide-react';
 
 interface CitySelectionModalProps {
@@ -28,45 +26,13 @@ export const CitySelectionModal: React.FC<CitySelectionModalProps> = ({
   onClose,
 }) => {
   const [cidadeNome, setCidadeNome] = useState('');
-  const [cidadesExistentes, setCidadesExistentes] = useState<Cidade[]>([]);
-  const [selectedCidadeId, setSelectedCidadeId] = useState<string | number | undefined>(undefined);
   const [loading, setLoading] = useState(false);
-  const [fetchingCidades, setFetchingCidades] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
-  // Carregar lista de cidades já cadastradas no sistema
-  useEffect(() => {
-    let isMounted = true;
-    api
-      .getCidades()
-      .then((data) => {
-        if (isMounted) {
-          setCidadesExistentes(data || []);
-        }
-      })
-      .catch((err) => {
-        console.warn('Erro ao carregar lista de cidades:', err);
-      })
-      .finally(() => {
-        if (isMounted) setFetchingCidades(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const handleSelectExisting = (cidade: Cidade) => {
-    setCidadeNome(cidade.nome);
-    setSelectedCidadeId(cidade.id);
-    setError(null);
-  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setCidadeNome(val);
-    setSelectedCidadeId(undefined);
     setError(null);
   };
 
@@ -75,7 +41,7 @@ export const CitySelectionModal: React.FC<CitySelectionModalProps> = ({
     const cleanNome = cidadeNome.trim();
 
     if (!cleanNome) {
-      setError('Por favor, digite ou selecione o nome da sua cidade.');
+      setError('Por favor, digite o nome da sua cidade.');
       return;
     }
 
@@ -85,7 +51,6 @@ export const CitySelectionModal: React.FC<CitySelectionModalProps> = ({
     try {
       const response = await api.setUserCity({
         cidadeNome: cleanNome,
-        cidadeId: selectedCidadeId,
       });
 
       setSuccess(true);
@@ -110,11 +75,6 @@ export const CitySelectionModal: React.FC<CitySelectionModalProps> = ({
       setLoading(false);
     }
   };
-
-  // Filtrar cidades existentes conforme digitação
-  const filteredCidades = cidadesExistentes.filter((c) =>
-    (c.nome || '').toLowerCase().includes(cidadeNome.toLowerCase())
-  );
 
   return (
     <div
@@ -162,7 +122,7 @@ export const CitySelectionModal: React.FC<CitySelectionModalProps> = ({
               </p>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-5">
               {error && (
                 <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2.5">
                   <AlertCircle className="w-4 h-4 shrink-0" />
@@ -184,7 +144,7 @@ export const CitySelectionModal: React.FC<CitySelectionModalProps> = ({
                     autoFocus
                     value={cidadeNome}
                     onChange={handleInputChange}
-                    placeholder="Ex: São Paulo, Campinas, Santos..."
+                    placeholder="Digite o nome da sua cidade (ex: São Paulo, Salvador...)"
                     className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm font-medium border transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
                       darkMode
                         ? 'bg-slate-800/80 border-slate-700 text-white placeholder-slate-500 focus:border-emerald-500'
@@ -193,48 +153,9 @@ export const CitySelectionModal: React.FC<CitySelectionModalProps> = ({
                   />
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Se a cidade ainda não estiver cadastrada, ela será criada automaticamente para você.
+                  Digite o nome da cidade em que você deseja administrar as quadras.
                 </p>
               </div>
-
-              {/* Quick suggestions of existing cities */}
-              {!fetchingCidades && cidadesExistentes.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
-                    <Search className="w-3 h-3" />
-                    Cidades já disponíveis no sistema:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 rounded-lg border border-slate-200/40 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-800/20">
-                    {filteredCidades.length > 0 ? (
-                      filteredCidades.map((c) => {
-                        const isSelected =
-                          cidadeNome.toLowerCase().trim() === c.nome.toLowerCase().trim();
-                        return (
-                          <button
-                            key={c.id}
-                            type="button"
-                            onClick={() => handleSelectExisting(c)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                              isSelected
-                                ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-500/50'
-                                : darkMode
-                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                                : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 shadow-xs'
-                            }`}
-                          >
-                            <MapPin className="w-3 h-3 opacity-70" />
-                            <span>{c.nome}</span>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="px-2 py-1 text-xs text-slate-400 italic">
-                        Nenhuma cidade encontrada com esse nome. Criaremos &quot;{cidadeNome}&quot; como nova cidade!
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {/* Action Buttons */}
               <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-200/10">

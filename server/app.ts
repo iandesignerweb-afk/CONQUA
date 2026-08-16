@@ -44,6 +44,7 @@ import {
   getAuditLogs,
   addAuditLogDoc,
   setUserCity,
+  syncAndCleanOrphanData,
 } from './supabaseServer.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'controle_de_quadras_supabase_secret_2026';
@@ -103,8 +104,8 @@ export async function seedDefaultUsers() {
 
     for (const u of defaultUsers) {
       const existing = await findUserByUsernameOrEmail(u.usuario);
+      const hash = bcrypt.hashSync(u.senha, 10);
       if (!existing) {
-        const hash = bcrypt.hashSync(u.senha, 10);
         await createUserDoc({
           nome: u.nome,
           usuario: u.usuario,
@@ -113,8 +114,17 @@ export async function seedDefaultUsers() {
           permissao: u.permissao,
         });
         console.log(`[Supabase Seed] Criado usuário padrão: ${u.usuario}`);
+      } else {
+        const matches = existing.senha_hash ? bcrypt.compareSync(u.senha, existing.senha_hash) : false;
+        if (!matches) {
+          await updateUserDoc(String(existing.id), { senha_hash: hash });
+          console.log(`[Supabase Seed] Atualizada senha para usuário padrão: ${u.usuario}`);
+        }
       }
     }
+
+    // Limpa registros órfãos ou resíduos deixados por cartões excluídos
+    await syncAndCleanOrphanData();
   } catch (err) {
     console.warn('[Supabase Seed] Erro ao inicializar usuários padrões:', err);
   }
@@ -195,8 +205,12 @@ const authenticateToken = async (
 };
 
 const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
-  if (!req.user || req.user.permissao !== 'Administrador') {
-    return res.status(403).json({ error: 'Acesso restrito para administradores.' });
+  if (!req.user) {
+    return res.status(401).json({ error: 'Acesso não autorizado. Faça login.' });
+  }
+  const role = String(req.user.permissao || '').toLowerCase();
+  if (role !== 'administrador' && role !== 'admin' && role !== 'dirigente') {
+    return res.status(403).json({ error: 'Acesso restrito para administradores e dirigentes.' });
   }
   next();
 };
@@ -286,9 +300,8 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
     }
 
-    const allUsers = await getUsers();
-    const isFirstUser = allUsers.length === 0;
-    const permissao = isFirstUser ? 'Administrador' : 'Usuário comum';
+    // Todo usuário que se cadastrar na criação de conta passa a ser Administrador da sua conta/organização
+    const permissao = 'Administrador';
 
     // Cria o usuário em Supabase Authentication (auth.users) e salva em public.users com o auth user ID
     const regResult = await registerUserWithSupabaseAuth({
@@ -353,8 +366,6 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
     let user = await findUserByUsernameOrEmail(cleanEmail);
 
     if (!user) {
-      const allUsers = await getUsers();
-      const isFirstUser = allUsers.length === 0;
       const baseName = name || cleanEmail.split('@')[0];
       const baseUsername = cleanEmail.split('@')[0];
 
@@ -365,7 +376,7 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
         usuario: baseUsername,
         email: cleanEmail,
         senha_hash: dummyHash,
-        permissao: isFirstUser ? 'Administrador' : 'Usuário comum',
+        permissao: 'Administrador',
         cidade_configurada: false,
       });
     }
@@ -640,7 +651,7 @@ app.get('/api/cidades', authenticateToken, async (req: Request, res: Response) =
   }
 });
 
-app.post('/api/cidades', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.post('/api/cidades', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { nome } = req.body;
     if (!nome || !nome.trim()) {
@@ -656,7 +667,7 @@ app.post('/api/cidades', authenticateToken, requireAdmin, async (req: AuthReques
   }
 });
 
-app.put('/api/cidades/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.put('/api/cidades/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { nome } = req.body;
@@ -670,7 +681,7 @@ app.put('/api/cidades/:id', authenticateToken, requireAdmin, async (req: AuthReq
   }
 });
 
-app.delete('/api/cidades/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.delete('/api/cidades/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const cidade = await getCidadeById(id);
@@ -687,11 +698,74 @@ app.delete('/api/cidades/:id', authenticateToken, requireAdmin, async (req: Auth
   }
 });
 
+app.post('/api/cidades/:id/reset', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const cidade = await getCidadeById(id);
+    if (!cidade) {
+      return res.status(404).json({ error: 'Cidade não encontrada.' });
+    }
+
+    const bairros = await getBairros();
+    const cityBairroIds = bairros
+      .filter((b: any) => String(b.cidade_id) === String(id))
+      .map((b: any) => String(b.id));
+
+    const quadras = await getQuadras();
+    const cityQuadras = quadras.filter(
+      (q: any) => cityBairroIds.includes(String(q.bairro_id)) || String(q.cidade_id) === String(id)
+    );
+
+    const historicoEntries: any[] = [];
+    for (const q of cityQuadras) {
+      if (q.status === 'Feita') {
+        await updateQuadraDoc(q.id, {
+          status: 'Pendente',
+          data_conclusao: null,
+          usuario_id: null,
+          usuario_nome: null,
+        });
+
+        historicoEntries.push({
+          quadra_id: q.id,
+          quadra_numero: q.numero,
+          bairro_id: q.bairro_id,
+          bairro_nome: cidade.nome,
+          acao: 'Reset',
+          usuario_id: req.user!.id,
+          usuario_nome: req.user!.nome,
+          observacao: 'Reinicialização da Cidade',
+        });
+      }
+    }
+
+    if (historicoEntries.length > 0) {
+      await addHistoricoDocs(historicoEntries);
+    }
+
+    for (const bId of cityBairroIds) {
+      await updateBairroDoc(bId, {
+        status: 'Não Iniciado',
+        quadras_concluidas: 0,
+        percentual_concluido: 0,
+        data_conclusao: null,
+      });
+    }
+
+    await addAuditLog(req.user!.id, req.user!.nome, 'Reiniciou Cidade', `Reiniciou todas as quadras da cidade ${cidade.nome}.`, req.ip);
+
+    return res.json({ message: 'Cidade reiniciada com sucesso.' });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Erro ao reiniciar cidade: ' + err.message });
+  }
+});
+
 // -------------------------------------------------------------
 // ROTAS DE BAIRROS
 // -------------------------------------------------------------
 app.get('/api/bairros', authenticateToken, async (req: Request, res: Response) => {
   try {
+    await syncAndCleanOrphanData();
     const { cidadeId, cidade_id } = req.query;
     let bairros = await getBairros();
     const cidades = await getCidades();
@@ -727,7 +801,7 @@ app.get('/api/bairros', authenticateToken, async (req: Request, res: Response) =
   }
 });
 
-app.post('/api/bairros', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.post('/api/bairros', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { nome, cidade_id, cidadeId } = req.body;
     const resolvedCidadeId = cidade_id || cidadeId;
@@ -768,7 +842,7 @@ app.post('/api/bairros', authenticateToken, requireAdmin, async (req: AuthReques
   }
 });
 
-app.put('/api/bairros/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.put('/api/bairros/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { nome, cidade_id, cidadeId } = req.body;
@@ -789,7 +863,7 @@ app.put('/api/bairros/:id', authenticateToken, requireAdmin, async (req: AuthReq
   }
 });
 
-app.delete('/api/bairros/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.delete('/api/bairros/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const bairro = await getBairroById(id);
@@ -806,7 +880,7 @@ app.delete('/api/bairros/:id', authenticateToken, requireAdmin, async (req: Auth
   }
 });
 
-app.post('/api/bairros/:id/reset', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.post('/api/bairros/:id/reset', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const bairro = await getBairroById(id);
@@ -862,46 +936,74 @@ app.post('/api/bairros/:id/reset', authenticateToken, requireAdmin, async (req: 
 // -------------------------------------------------------------
 // ROTAS DE QUADRAS
 // -------------------------------------------------------------
-async function getOrCreateBairro(cidadeId?: string | number | null, bairroId?: string | number | null): Promise<string> {
-  if (bairroId) {
-    const existing = await getBairroById(String(bairroId));
-    if (existing) return String(existing.id);
-  }
+async function getOrCreateBairro(
+  cidadeId?: string | number | null,
+  bairroId?: string | number | null,
+  cidadeNome?: string | null,
+  bairroNome?: string | null
+): Promise<{ cidadeId: string; cidadeNome: string; bairroId: string; bairroNome: string }> {
+  // 1. Resolve Cidade
+  let resolvedCid: any = null;
+  const cidades = await getCidades();
 
-  const bairros = await getBairros();
   if (cidadeId) {
-    const matching = bairros.find((b: any) => String(b.cidade_id) === String(cidadeId));
-    if (matching) return String(matching.id);
+    resolvedCid = cidades.find((c: any) => String(c.id) === String(cidadeId));
   }
-
-  if (bairros.length > 0) {
-    return String(bairros[0].id);
+  if (!resolvedCid && cidadeNome && String(cidadeNome).trim()) {
+    const cleanCNome = String(cidadeNome).trim().toLowerCase();
+    resolvedCid = cidades.find((c: any) => (c.nome || '').toLowerCase().trim() === cleanCNome);
+    if (!resolvedCid) {
+      resolvedCid = await createCidadeDoc({ nome: String(cidadeNome).trim(), estado: 'SP' });
+    }
   }
-
-  let defaultCidadeId = cidadeId;
-  if (!defaultCidadeId) {
-    const cidades = await getCidades();
+  if (!resolvedCid) {
     if (cidades.length > 0) {
-      defaultCidadeId = cidades[0].id;
+      resolvedCid = cidades[0];
     } else {
-      const newCid = await createCidadeDoc({ nome: 'Cidade Principal' });
-      defaultCidadeId = newCid.id;
+      resolvedCid = await createCidadeDoc({ nome: 'Canapi', estado: 'AL' });
     }
   }
 
-  const newBairro = await createBairroDoc({
-    cidade_id: String(defaultCidadeId),
-    nome: 'Centro',
-    total_quadras: 0,
-    quadras_concluidas: 0,
-    percentual_concluido: 0,
-  });
+  // 2. Resolve Bairro
+  let resolvedBai: any = null;
+  const bairros = await getBairros();
 
-  return String(newBairro.id);
+  if (bairroId) {
+    resolvedBai = bairros.find((b: any) => String(b.id) === String(bairroId));
+  }
+  if (!resolvedBai && bairroNome && String(bairroNome).trim()) {
+    const cleanBNome = String(bairroNome).trim().toLowerCase();
+    resolvedBai = bairros.find(
+      (b: any) => String(b.cidade_id) === String(resolvedCid.id) && (b.nome || '').toLowerCase().trim() === cleanBNome
+    );
+    if (!resolvedBai) {
+      resolvedBai = await createBairroDoc({
+        cidade_id: String(resolvedCid.id),
+        nome: String(bairroNome).trim(),
+      });
+    }
+  }
+  if (!resolvedBai) {
+    resolvedBai = bairros.find((b: any) => String(b.cidade_id) === String(resolvedCid.id));
+  }
+  if (!resolvedBai) {
+    resolvedBai = await createBairroDoc({
+      cidade_id: String(resolvedCid.id),
+      nome: 'Centro',
+    });
+  }
+
+  return {
+    cidadeId: String(resolvedCid.id),
+    cidadeNome: resolvedCid.nome,
+    bairroId: String(resolvedBai.id),
+    bairroNome: resolvedBai.nome,
+  };
 }
 
 app.get('/api/quadras', authenticateToken, async (req: Request, res: Response) => {
   try {
+    await syncAndCleanOrphanData();
     const { search, bairro_id, bairroId, cidade_id, cidadeId, status, usuarioId, usuario_id, numero } = req.query;
     let quadras = await getQuadras();
     const bairros = await getBairros();
@@ -918,7 +1020,7 @@ app.get('/api/quadras', authenticateToken, async (req: Request, res: Response) =
       const cityBairroIds = bairros
         .filter((b: any) => String(b.cidade_id) === String(targetCidadeId))
         .map((b: any) => String(b.id));
-      quadras = quadras.filter((q: any) => cityBairroIds.includes(String(q.bairro_id)));
+      quadras = quadras.filter((q: any) => cityBairroIds.includes(String(q.bairro_id)) || String(q.cidade_id) === String(targetCidadeId));
     }
 
     if (status && status !== 'Todos') {
@@ -988,33 +1090,35 @@ app.get('/api/quadras', authenticateToken, async (req: Request, res: Response) =
   }
 });
 
-app.post('/api/quadras', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.post('/api/quadras', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { numero, observacao } = req.body;
     const bairro_id_input = req.body.bairro_id || req.body.bairroId;
     const cidade_id_input = req.body.cidade_id || req.body.cidadeId;
+    const bairro_nome_input = req.body.bairro_nome || req.body.bairroNome;
+    const cidade_nome_input = req.body.cidade_nome || req.body.cidadeNome;
 
     if (!numero || String(numero).trim() === '') {
       return res.status(400).json({ error: 'Número da quadra é obrigatório.' });
     }
 
-    const resolvedBairroId = await getOrCreateBairro(cidade_id_input, bairro_id_input);
+    const loc = await getOrCreateBairro(cidade_id_input, bairro_id_input, cidade_nome_input, bairro_nome_input);
 
     const newQuadra = await createQuadraDoc({
       numero: String(numero).trim(),
-      bairro_id: String(resolvedBairroId),
+      bairro_id: String(loc.bairroId),
       status: 'Pendente',
       observacao: observacao || '',
     });
 
     // Atualizar contador do bairro
     const quadras = await getQuadras();
-    const bairroQuadras = quadras.filter((q: any) => String(q.bairro_id) === String(resolvedBairroId));
+    const bairroQuadras = quadras.filter((q: any) => String(q.bairro_id) === String(loc.bairroId));
     const done = bairroQuadras.filter((q: any) => q.status === 'Feita').length;
     const total = bairroQuadras.length;
     const perc = total > 0 ? Math.round((done / total) * 100) : 0;
 
-    await updateBairroDoc(String(resolvedBairroId), {
+    await updateBairroDoc(String(loc.bairroId), {
       total_quadras: total,
       quadras_concluidas: done,
       percentual_concluido: perc,
@@ -1028,11 +1132,13 @@ app.post('/api/quadras', authenticateToken, requireAdmin, async (req: AuthReques
   }
 });
 
-app.post('/api/quadras/bulk', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.post('/api/quadras/bulk', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { inicio, fim } = req.body;
     const bairro_id_input = req.body.bairro_id || req.body.bairroId;
     const cidade_id_input = req.body.cidade_id || req.body.cidadeId;
+    const bairro_nome_input = req.body.bairro_nome || req.body.bairroNome;
+    const cidade_nome_input = req.body.cidade_nome || req.body.cidadeNome;
 
     if (inicio === undefined || fim === undefined) {
       return res.status(400).json({ error: 'Intervalo (início e fim) é obrigatório.' });
@@ -1044,13 +1150,13 @@ app.post('/api/quadras/bulk', authenticateToken, requireAdmin, async (req: AuthR
       return res.status(400).json({ error: 'Intervalo inválido (início deve ser menor ou igual ao fim).' });
     }
 
-    const resolvedBairroId = await getOrCreateBairro(cidade_id_input, bairro_id_input);
+    const loc = await getOrCreateBairro(cidade_id_input, bairro_id_input, cidade_nome_input, bairro_nome_input);
 
     const inserts: any[] = [];
     for (let i = start; i <= end; i++) {
       inserts.push({
         numero: String(i),
-        bairro_id: String(resolvedBairroId),
+        bairro_id: String(loc.bairroId),
         status: 'Pendente',
       });
     }
@@ -1059,12 +1165,12 @@ app.post('/api/quadras/bulk', authenticateToken, requireAdmin, async (req: AuthR
 
     // Atualizar estatísticas do bairro
     const quadras = await getQuadras();
-    const bairroQuadras = quadras.filter((q: any) => String(q.bairro_id) === String(resolvedBairroId));
+    const bairroQuadras = quadras.filter((q: any) => String(q.bairro_id) === String(loc.bairroId));
     const done = bairroQuadras.filter((q: any) => q.status === 'Feita').length;
     const total = bairroQuadras.length;
     const perc = total > 0 ? Math.round((done / total) * 100) : 0;
 
-    await updateBairroDoc(String(resolvedBairroId), {
+    await updateBairroDoc(String(loc.bairroId), {
       total_quadras: total,
       quadras_concluidas: done,
       percentual_concluido: perc,
@@ -1082,7 +1188,7 @@ app.post('/api/quadras/bulk', authenticateToken, requireAdmin, async (req: AuthR
   }
 });
 
-app.put('/api/quadras/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.put('/api/quadras/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { numero, status, usuario_id, usuario_nome, observacao } = req.body;
@@ -1103,7 +1209,7 @@ app.put('/api/quadras/:id', authenticateToken, requireAdmin, async (req: AuthReq
   }
 });
 
-app.delete('/api/quadras/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.delete('/api/quadras/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const quadra = await getQuadraById(id);
@@ -1291,6 +1397,7 @@ app.get('/api/historico', authenticateToken, async (req: Request, res: Response)
 // -------------------------------------------------------------
 app.get('/api/cartoes', authenticateToken, async (req: Request, res: Response) => {
   try {
+    await syncAndCleanOrphanData();
     const cartoes = await getCartoes();
     const cartaoQuadras = await getCartaoQuadras();
     const quadras = await getQuadras();
@@ -1308,7 +1415,7 @@ app.get('/api/cartoes', authenticateToken, async (req: Request, res: Response) =
       const qIds = joins.map((j: any) => String(j.quadra_id));
 
       const myQuadras = quadras
-        .filter((q: any) => qIds.includes(String(q.id)))
+        .filter((q: any) => qIds.includes(String(q.id)) || (q.cartao_id && String(q.cartao_id) === String(c.id)))
         .map((q: any) => {
           const b = bairrosMap.get(String(q.bairro_id));
           const cid = b ? cidadesMap.get(String(b.cidade_id)) : null;
@@ -1341,6 +1448,8 @@ app.get('/api/cartoes', authenticateToken, async (req: Request, res: Response) =
           if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
           return String(a.numero || '').localeCompare(String(b.numero || ''));
         });
+
+      const allQuadraIds = Array.from(new Set([...qIds, ...myQuadras.map((q: any) => String(q.id))]));
 
       const myDesigs = designacoes
         .filter((d: any) => String(d.cartao_id) === String(c.id))
@@ -1380,8 +1489,8 @@ app.get('/api/cartoes', authenticateToken, async (req: Request, res: Response) =
         usuario_id: uObj ? uObj.id : (cartaoUserId || null),
         usuarioNome: uObj ? uObj.nome : (c.usuarioNome || c.usuario_nome || null),
         usuario_nome: uObj ? uObj.nome : (c.usuarioNome || c.usuario_nome || null),
-        quadraIds: qIds,
-        quadra_ids: qIds,
+        quadraIds: allQuadraIds,
+        quadra_ids: allQuadraIds,
         quadras: myQuadras,
         totalQuadras: myQuadras.length,
         total_quadras: myQuadras.length,
@@ -1426,7 +1535,7 @@ app.get('/api/cartoes/:id', authenticateToken, async (req: Request, res: Respons
   }
 });
 
-app.post('/api/cartoes', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.post('/api/cartoes', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const {
       titulo,
@@ -1453,47 +1562,62 @@ app.post('/api/cartoes', authenticateToken, requireAdmin, async (req: AuthReques
       return res.status(400).json({ error: 'Título do cartão é obrigatório.' });
     }
 
-    const resolvedCidadeId = cidadeId || cidade_id || null;
-    const resolvedBairroId = bairroId || bairro_id || null;
+    const loc = await getOrCreateBairro(
+      cidadeId || cidade_id,
+      bairroId || bairro_id,
+      cidadeNome || cidade_nome,
+      bairroNome || bairro_nome
+    );
+
     const resolvedUserId = usuarioId !== undefined ? usuarioId : (usuario_id !== undefined ? usuario_id : null);
+    let resolvedUserNome = '';
+    if (resolvedUserId) {
+      const u = await getUserById(String(resolvedUserId));
+      if (u) resolvedUserNome = u.nome;
+    }
 
     const newCartao = await createCartaoDoc({
       titulo: titulo.trim(),
       descricao: (descricao || observacao || '').trim(),
       observacao: (observacao || descricao || '').trim(),
       cor: cor || '#10B981',
-      cidade_id: resolvedCidadeId ? String(resolvedCidadeId) : null,
-      cidade_nome: cidadeNome || cidade_nome || '',
-      bairro_id: resolvedBairroId ? String(resolvedBairroId) : null,
-      bairro_nome: bairroNome || bairro_nome || '',
+      cidade_id: String(loc.cidadeId),
+      cidade_nome: loc.cidadeNome,
+      bairro_id: String(loc.bairroId),
+      bairro_nome: loc.bairroNome,
       usuario_id: resolvedUserId ? String(resolvedUserId) : null,
+      usuario_nome: resolvedUserNome,
     });
 
     const targetQuadraIds = new Set<string>();
 
     const explicitQuadras = quadraIds || quadra_ids;
     if (Array.isArray(explicitQuadras)) {
-      explicitQuadras.forEach((qId: any) => targetQuadraIds.add(String(qId)));
+      explicitQuadras.forEach((qId: any) => {
+        if (qId) targetQuadraIds.add(String(qId));
+      });
     }
 
     if (quadrasIniciaisInicio !== undefined && quadrasIniciaisFim !== undefined) {
       const start = Number(quadrasIniciaisInicio);
       const end = Number(quadrasIniciaisFim);
       if (!isNaN(start) && !isNaN(end) && start <= end) {
-        const targetBairro = await getOrCreateBairro(resolvedCidadeId, resolvedBairroId);
         const allQuadras = await getQuadras();
 
         for (let i = start; i <= end; i++) {
           const numStr = String(i);
           let match = allQuadras.find(
-            (q: any) => String(q.bairro_id) === String(targetBairro) && String(q.numero) === numStr
+            (q: any) => String(q.bairro_id) === String(loc.bairroId) && String(q.numero) === numStr
           );
           if (!match) {
             match = await createQuadraDoc({
               numero: numStr,
-              bairro_id: String(targetBairro),
+              bairro_id: String(loc.bairroId),
               status: 'Pendente',
+              cartao_id: newCartao.id,
             });
+          } else {
+            await updateQuadraDoc(String(match.id), { cartao_id: newCartao.id });
           }
           targetQuadraIds.add(String(match.id));
         }
@@ -1506,23 +1630,58 @@ app.post('/api/cartoes', authenticateToken, requireAdmin, async (req: AuthReques
         quadra_id: qId,
       }));
       await addCartaoQuadras(joins);
+
+      // Também atualiza o cartao_id nas quadras vinculadas
+      for (const qId of Array.from(targetQuadraIds)) {
+        await updateQuadraDoc(String(qId), { cartao_id: newCartao.id });
+      }
+    }
+
+    // Se tiver usuário atribuído, registra no histórico de designações
+    if (resolvedUserId && resolvedUserNome) {
+      try {
+        const today = new Date();
+        const formattedDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+        await addCartaoDesignacoes([{
+          cartao_id: String(newCartao.id),
+          usuario_id: String(resolvedUserId),
+          usuario_nome: resolvedUserNome,
+          dirigente_nome: resolvedUserNome,
+          data_designacao: formattedDate,
+          data_conclusao: null,
+          status: 'Ativo',
+        }]);
+      } catch (desigErr) {
+        console.error('Erro ao registrar histórico de designação inicial:', desigErr);
+      }
     }
 
     await addAuditLog(req.user!.id, req.user!.nome, 'Criou Cartão', `Criou o cartão ${newCartao.titulo}.`, req.ip);
 
     return res.status(201).json({
       ...newCartao,
-      cidadeId: resolvedCidadeId,
-      bairroId: resolvedBairroId,
+      cidadeId: loc.cidadeId,
+      cidade_id: loc.cidadeId,
+      cidadeNome: loc.cidadeNome,
+      cidade_nome: loc.cidadeNome,
+      bairroId: loc.bairroId,
+      bairro_id: loc.bairroId,
+      bairroNome: loc.bairroNome,
+      bairro_nome: loc.bairroNome,
       usuarioId: resolvedUserId,
+      usuario_id: resolvedUserId,
+      usuarioNome: resolvedUserNome,
+      usuario_nome: resolvedUserNome,
       quadraIds: Array.from(targetQuadraIds),
+      quadras_ids: Array.from(targetQuadraIds),
     });
   } catch (err: any) {
+    console.error('Erro ao criar cartão:', err);
     return res.status(500).json({ error: 'Erro ao criar cartão: ' + err.message });
   }
 });
 
-app.put('/api/cartoes/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.put('/api/cartoes/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const {
@@ -1622,7 +1781,7 @@ app.put('/api/cartoes/:id', authenticateToken, requireAdmin, async (req: AuthReq
   }
 });
 
-app.delete('/api/cartoes/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.delete('/api/cartoes/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const cartao = await getCartaoById(id);
@@ -1630,9 +1789,26 @@ app.delete('/api/cartoes/:id', authenticateToken, requireAdmin, async (req: Auth
       return res.status(404).json({ error: 'Cartão não encontrado.' });
     }
 
+    // 1. Delete all quadras linked to this cartao
+    const cartaoQuadras = await getCartaoQuadras();
+    const joins = cartaoQuadras.filter((cq: any) => String(cq.cartao_id) === String(id));
+    const linkedQuadraIds = new Set<string>(joins.map((j: any) => String(j.quadra_id)));
+
+    const allQuadras = await getQuadras();
+    allQuadras.filter((q: any) => String(q.cartao_id) === String(id)).forEach((q: any) => {
+      linkedQuadraIds.add(String(q.id));
+    });
+
+    for (const qId of Array.from(linkedQuadraIds)) {
+      await deleteQuadraDoc(qId);
+    }
+
     await deleteCartaoQuadrasByCartaoId(id);
     await deleteCartaoDesignacoesByCartaoId(id);
     await deleteCartaoDoc(id);
+
+    // 2. Perform global sync and cleanup of orphan quadras and empty bairros
+    await syncAndCleanOrphanData();
 
     await addAuditLog(req.user!.id, req.user!.nome, 'Excluiu Cartão', `Excluiu cartão ${cartao.titulo}.`, req.ip);
 
@@ -1643,7 +1819,7 @@ app.delete('/api/cartoes/:id', authenticateToken, requireAdmin, async (req: Auth
 });
 
 // Criar e vincular quadras a um cartão específico
-app.post('/api/cartoes/:id/quadras', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.post('/api/cartoes/:id/quadras', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { quadra_id, quadraId, quadra_ids, quadraIds, numero, inicio, fim, numeros } = req.body;
@@ -1685,35 +1861,40 @@ app.post('/api/cartoes/:id/quadras', authenticateToken, requireAdmin, async (req
     }
 
     if (numbersToCreate.length > 0) {
-      const targetBairroId = await getOrCreateBairro(
+      const loc = await getOrCreateBairro(
         cartao.cidade_id || cartao.cidadeId,
-        cartao.bairro_id || cartao.bairroId
+        cartao.bairro_id || cartao.bairroId,
+        cartao.cidade_nome || cartao.cidadeNome,
+        cartao.bairro_nome || cartao.bairroNome
       );
 
       const allQuadras = await getQuadras();
       for (const numStr of numbersToCreate) {
         let existing = allQuadras.find(
-          (q: any) => String(q.bairro_id) === String(targetBairroId) && String(q.numero) === numStr
+          (q: any) => String(q.bairro_id) === String(loc.bairroId) && String(q.numero) === numStr
         );
 
         if (!existing) {
           existing = await createQuadraDoc({
             numero: numStr,
-            bairro_id: String(targetBairroId),
+            bairro_id: String(loc.bairroId),
             status: 'Pendente',
+            cartao_id: id,
           });
           countCriadas++;
+        } else {
+          await updateQuadraDoc(String(existing.id), { cartao_id: id });
         }
         toLinkIds.push(String(existing.id));
       }
 
       const refreshedQuadras = await getQuadras();
-      const bQuadras = refreshedQuadras.filter((q: any) => String(q.bairro_id) === String(targetBairroId));
+      const bQuadras = refreshedQuadras.filter((q: any) => String(q.bairro_id) === String(loc.bairroId));
       const done = bQuadras.filter((q: any) => q.status === 'Feita').length;
       const total = bQuadras.length;
       const perc = total > 0 ? Math.round((done / total) * 100) : 0;
 
-      await updateBairroDoc(String(targetBairroId), {
+      await updateBairroDoc(String(loc.bairroId), {
         total_quadras: total,
         quadras_concluidas: done,
         percentual_concluido: perc,
@@ -1725,6 +1906,7 @@ app.post('/api/cartoes/:id/quadras', authenticateToken, requireAdmin, async (req
       if (!existingForCartao.has(qId)) {
         newJoinsToAdd.push({ cartao_id: id, quadra_id: qId });
         existingForCartao.add(qId);
+        await updateQuadraDoc(String(qId), { cartao_id: id });
       }
     }
 
@@ -1754,7 +1936,7 @@ app.post('/api/cartoes/:id/quadras', authenticateToken, requireAdmin, async (req
   }
 });
 
-app.delete('/api/cartoes/:id/quadras/:quadraId', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.delete('/api/cartoes/:id/quadras/:quadraId', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id, quadraId } = req.params;
     const joins = await getCartaoQuadras();
@@ -1776,7 +1958,7 @@ app.delete('/api/cartoes/:id/quadras/:quadraId', authenticateToken, requireAdmin
   }
 });
 
-app.patch('/api/cartoes/:cartaoId/quadras/:quadraId/toggle', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.patch('/api/cartoes/:cartaoId/quadras/:quadraId/toggle', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { cartaoId, quadraId } = req.params;
     const joins = await getCartaoQuadras();
@@ -1801,7 +1983,7 @@ app.patch('/api/cartoes/:cartaoId/quadras/:quadraId/toggle', authenticateToken, 
   }
 });
 
-app.put('/api/cartoes/:id/designacoes', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
+app.put('/api/cartoes/:id/designacoes', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { designacoes, ultimaDataConcluida } = req.body;
@@ -1839,12 +2021,12 @@ app.put('/api/cartoes/:id/designacoes', authenticateToken, requireAdmin, async (
 // -------------------------------------------------------------
 app.get('/api/dashboard/stats', authenticateToken, async (req: Request, res: Response) => {
   try {
+    await syncAndCleanOrphanData();
     const cidades = await getCidades();
     const bairros = await getBairros();
     const quadras = await getQuadras();
 
     const totalCidades = cidades.length;
-    const totalBairros = bairros.length;
     const totalQuadras = quadras.length;
     const quadrasConcluidas = quadras.filter((q: any) => q.status === 'Feita').length;
     const quadrasPendentes = totalQuadras - quadrasConcluidas;
@@ -1853,7 +2035,7 @@ app.get('/api/dashboard/stats', authenticateToken, async (req: Request, res: Res
     const progressoPorCidade = cidades.map((c: any) => {
       const cBairros = bairros.filter((b: any) => String(b.cidade_id) === String(c.id));
       const cBairroIds = cBairros.map((b: any) => String(b.id));
-      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)));
+      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)) || String(q.cidade_id) === String(c.id));
       const done = cQuadras.filter((q: any) => q.status === 'Feita').length;
       const total = cQuadras.length;
       return {
@@ -1875,30 +2057,14 @@ app.get('/api/dashboard/stats', authenticateToken, async (req: Request, res: Res
       .map(([usuario, totalConcluidas]) => ({ usuario, totalConcluidas }))
       .sort((a, b) => b.totalConcluidas - a.totalConcluidas);
 
-    const cidadesMap = new Map(cidades.map((c: any) => [c.id, c.nome]));
-    const bairrosMaisAvançados = bairros.map((b: any) => {
-      const bQuadras = quadras.filter((q: any) => String(q.bairro_id) === String(b.id));
-      const total = bQuadras.length;
-      const done = bQuadras.filter((q: any) => q.status === 'Feita').length;
-      return {
-        bairro: b.nome,
-        cidade: cidadesMap.get(b.cidade_id) || 'Cidade',
-        total,
-        concluidas: done,
-        percentual: total > 0 ? Math.round((done / total) * 100) : 0,
-      };
-    }).sort((a, b) => b.percentual - a.percentual).slice(0, 5);
-
     return res.json({
       totalCidades,
-      totalBairros,
       totalQuadras,
       quadrasConcluidas,
       quadrasPendentes,
       percentualConcluido,
       progressoPorCidade,
       progressoPorUsuario,
-      bairrosMaisAvançados,
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Erro ao buscar estatísticas do dashboard: ' + err.message });
@@ -1917,34 +2083,18 @@ app.get('/api/relatorios', authenticateToken, async (req: Request, res: Response
     const quadrasPendentes = totalQuadras - quadrasConcluidas;
     const percentualGeral = totalQuadras > 0 ? Math.round((quadrasConcluidas / totalQuadras) * 100) : 0;
 
-    const cidadesMap = new Map(cidades.map((c: any) => [c.id, c.nome]));
-
     let maxCidadePerc = -1;
     let cidadeMaisAvançada = 'Nenhuma';
     cidades.forEach((c: any) => {
       const cBairros = bairros.filter((b: any) => String(b.cidade_id) === String(c.id));
       const cBairroIds = cBairros.map((b: any) => String(b.id));
-      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)));
+      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)) || String(q.cidade_id) === String(c.id));
       if (cQuadras.length > 0) {
         const done = cQuadras.filter((q: any) => q.status === 'Feita').length;
         const perc = Math.round((done / cQuadras.length) * 100);
         if (perc > maxCidadePerc) {
           maxCidadePerc = perc;
           cidadeMaisAvançada = `${c.nome} (${perc}%)`;
-        }
-      }
-    });
-
-    let maxBairroPerc = -1;
-    let bairroMaisAvançado = 'Nenhum';
-    bairros.forEach((b: any) => {
-      const bQuadras = quadras.filter((q: any) => String(q.bairro_id) === String(b.id));
-      if (bQuadras.length > 0) {
-        const done = bQuadras.filter((q: any) => q.status === 'Feita').length;
-        const perc = Math.round((done / bQuadras.length) * 100);
-        if (perc > maxBairroPerc) {
-          maxBairroPerc = perc;
-          bairroMaisAvançado = `${b.nome} (${perc}%)`;
         }
       }
     });
@@ -1981,21 +2131,6 @@ app.get('/api/relatorios', authenticateToken, async (req: Request, res: Response
       .filter((u) => u.quadrasFeitas > 0)
       .sort((a, b) => b.quadrasFeitas - a.quadrasFeitas);
 
-    const relatorioBairros = bairros.map((b: any) => {
-      const bQuadras = quadras.filter((q: any) => String(q.bairro_id) === String(b.id));
-      const total = bQuadras.length;
-      const done = bQuadras.filter((q: any) => q.status === 'Feita').length;
-      return {
-        bairroId: b.id,
-        bairroNome: b.nome,
-        cidadeNome: cidadesMap.get(b.cidade_id) || 'Cidade',
-        total,
-        concluidas: done,
-        pendentes: total - done,
-        percentual: total > 0 ? Math.round((done / total) * 100) : 0,
-      };
-    });
-
     return res.json({
       geradoEm: new Date().toISOString(),
       totalQuadras,
@@ -2004,10 +2139,8 @@ app.get('/api/relatorios', authenticateToken, async (req: Request, res: Response
       percentualConcluido: percentualGeral,
       percentualGeral,
       cidadeMaisAvançada,
-      bairroMaisAvançado,
       tempoMedioEstimado: '2 a 4 semanas',
       userStats,
-      relatorioBairros,
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Erro ao gerar relatórios: ' + err.message });
@@ -2031,7 +2164,6 @@ app.get('/api/relatorios/resumo', authenticateToken, async (req: Request, res: R
     const cartoes = await getCartoes();
 
     const totalCidades = cidades.length;
-    const totalBairros = bairros.length;
     const totalQuadras = quadras.length;
     const quadrasConcluidas = quadras.filter((q: any) => q.status === 'Feita').length;
     const totalCartoes = cartoes.length;
@@ -2039,7 +2171,7 @@ app.get('/api/relatorios/resumo', authenticateToken, async (req: Request, res: R
     const quadrasPorCidade = cidades.map((c: any) => {
       const cBairros = bairros.filter((b: any) => String(b.cidade_id) === String(c.id));
       const cBairroIds = cBairros.map((b: any) => String(b.id));
-      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)));
+      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)) || String(q.cidade_id) === String(c.id));
       const done = cQuadras.filter((q: any) => q.status === 'Feita').length;
 
       return {
@@ -2063,7 +2195,6 @@ app.get('/api/relatorios/resumo', authenticateToken, async (req: Request, res: R
 
     return res.json({
       totalCidades,
-      totalBairros,
       totalQuadras,
       quadrasConcluidas,
       totalCartoes,
@@ -2088,7 +2219,7 @@ app.get('/api/relatorios/cidades', authenticateToken, async (req: Request, res: 
     const result = cidades.map((c: any) => {
       const cBairros = bairros.filter((b: any) => String(b.cidade_id) === String(c.id));
       const cBairroIds = cBairros.map((b: any) => String(b.id));
-      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)));
+      const cQuadras = quadras.filter((q: any) => cBairroIds.includes(String(q.bairro_id)) || String(q.cidade_id) === String(c.id));
 
       const total = cQuadras.length;
       const done = cQuadras.filter((q: any) => q.status === 'Feita').length;
@@ -2098,7 +2229,6 @@ app.get('/api/relatorios/cidades', authenticateToken, async (req: Request, res: 
       return {
         cidadeId: c.id,
         cidadeNome: c.nome,
-        totalBairros: cBairros.length,
         totalQuadras: total,
         quadrasConcluidas: done,
         quadrasPendentes: pend,

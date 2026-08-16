@@ -266,22 +266,33 @@ export const QuadrasControlView: React.FC<QuadrasControlViewProps> = ({
     }
   };
 
-  // Progress metrics
-  const totalInView = quadras.length;
-  const doneInView = quadras.filter((q) => q.status === 'Feita').length;
-  const pendingInView = totalInView - doneInView;
-  const percentInView =
-    totalInView > 0 ? Math.round((doneInView / totalInView) * 100) : 0;
-
-  const currentCidadeObj = cidades.find((c) => String(c.id) === selectedCidade);
-  const currentBairroObj = bairros.find((b) => String(b.id) === selectedBairro);
-
   // Filter bairros for Bairros list view
   const filteredBairros = bairros.filter((b) => {
     const matchesCidade = selectedCidade ? String(b.cidadeId) === selectedCidade : true;
     const matchesSearch = b.nome.toLowerCase().includes(bairroSearchFilter.toLowerCase());
     return matchesCidade && matchesSearch;
   });
+
+  // Progress metrics - calculate strictly for quadras belonging to active filtered bairros
+  const validBairroIds = new Set(
+    (selectedBairro
+      ? bairros.filter((b) => String(b.id) === selectedBairro)
+      : filteredBairros
+    ).map((b) => String(b.id))
+  );
+
+  const relevantQuadras = quadras.filter((q) =>
+    validBairroIds.has(String(q.bairroId || q.bairro_id))
+  );
+
+  const totalInView = relevantQuadras.length;
+  const doneInView = relevantQuadras.filter((q) => q.status === 'Feita').length;
+  const pendingInView = totalInView - doneInView;
+  const percentInView =
+    totalInView > 0 ? Math.round((doneInView / totalInView) * 100) : 0;
+
+  const currentCidadeObj = cidades.find((c) => String(c.id) === selectedCidade);
+  const currentBairroObj = bairros.find((b) => String(b.id) === selectedBairro);
 
   // For Dirigentes and non-admin users, show exclusively their designated territory cards
   if (!isAdmin) {

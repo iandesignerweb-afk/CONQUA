@@ -64,7 +64,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({ darkMode }) => {
           <div>
             <h2 className="text-lg font-bold">Relatório Completo de Desempenho</h2>
             <p className="text-xs text-slate-400">
-              Métricas detalhadas de produtividade, avanço de municípios e bairros
+              Métricas detalhadas de produtividade, avanço de municípios e quadras
             </p>
           </div>
         </div>
@@ -131,8 +131,8 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({ darkMode }) => {
         </div>
       </div>
 
-      {/* Highlights Cards (Cidade mais avançada & Bairro mais avançado) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Highlights Cards (Cidade mais avançada & Tempo Médio) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div
           className={`p-5 rounded-2xl border transition-colors shadow-sm flex items-center gap-4 ${
             darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
@@ -147,24 +147,6 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({ darkMode }) => {
             </span>
             <p className="text-sm font-extrabold text-white mt-0.5">
               {data.cidadeMaisAvançada}
-            </p>
-          </div>
-        </div>
-
-        <div
-          className={`p-5 rounded-2xl border transition-colors shadow-sm flex items-center gap-4 ${
-            darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-          }`}
-        >
-          <div className="p-3 bg-emerald-500/10 text-emerald-500 rounded-2xl">
-            <TrendingUp className="w-6 h-6" />
-          </div>
-          <div>
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Bairro Mais Avançado
-            </span>
-            <p className="text-sm font-extrabold text-white mt-0.5">
-              {data.bairroMaisAvançado}
             </p>
           </div>
         </div>

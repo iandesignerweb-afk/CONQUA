@@ -94,7 +94,6 @@ export interface AuditLog {
 
 export interface DashboardStats {
   totalCidades: number;
-  totalBairros: number;
   totalQuadras: number;
   quadrasConcluidas: number;
   quadrasPendentes: number;
@@ -108,13 +107,6 @@ export interface DashboardStats {
   progressoPorUsuario: Array<{
     usuario: string;
     totalConcluidas: number;
-  }>;
-  bairrosMaisAvançados: Array<{
-    bairro: string;
-    cidade: string;
-    total: number;
-    concluidas: number;
-    percentual: number;
   }>;
 }
 
@@ -132,14 +124,15 @@ export interface ReportData {
   totalQuadras: number;
   quadrasConcluidas: number;
   quadrasPendentes: number;
+  percentualConcluido?: number;
   percentualGeral: number;
-  relatorioBairros: Array<{
-    bairroId: number;
-    bairroNome: string;
-    cidadeNome: string;
-    total: number;
-    concluidas: number;
-    pendentes: number;
-    percentual: number;
+  cidadeMaisAvançada: string;
+  tempoMedioEstimado: string;
+  userStats: Array<{
+    usuarioId: any;
+    nome: string;
+    usuario: string;
+    permissao: string;
+    quadrasFeitas: number;
   }>;
 }

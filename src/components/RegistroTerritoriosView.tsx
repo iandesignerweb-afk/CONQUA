@@ -13,7 +13,6 @@ import {
   X,
   Save,
   Building2,
-  MapPin,
   RefreshCw,
 } from 'lucide-react';
 
@@ -33,7 +32,6 @@ export const RegistroTerritoriosView: React.FC<RegistroTerritoriosViewProps> = (
   const [anoServico, setAnoServico] = useState<string>('2026');
   const [numCiclos, setNumCiclos] = useState<number>(3); // Number of repeating cycle columns (default 3)
   const [cidadeFiltro, setCidadeFiltro] = useState<string>('');
-  const [bairroFiltro, setBairroFiltro] = useState<string>('');
   const [busca, setBusca] = useState<string>('');
 
   // Editing cycle modal
@@ -78,18 +76,17 @@ export const RegistroTerritoriosView: React.FC<RegistroTerritoriosViewProps> = (
   // Filtered Cartoes
   const cartoesFiltrados = cartoes.filter((c) => {
     if (cidadeFiltro && c.cidadeId && String(c.cidadeId) !== cidadeFiltro) return false;
-    if (bairroFiltro && c.bairroId && String(c.bairroId) !== bairroFiltro) return false;
     if (busca) {
       const term = busca.toLowerCase();
       const matchTitulo = c.titulo.toLowerCase().includes(term);
-      const matchBairro = c.bairroNome?.toLowerCase().includes(term);
+      const matchCidade = c.cidadeNome?.toLowerCase().includes(term);
       const matchDirigente = c.usuarioNome?.toLowerCase().includes(term);
-      return matchTitulo || matchBairro || matchDirigente;
+      return matchTitulo || matchCidade || matchDirigente;
     }
     return true;
   });
 
-  // Extract cities and bairros for filter dropdowns
+  // Extract cities for filter dropdowns
   const cidadesMap = new Map<number | string, { id: number | string; nome: string }>();
   cartoes.forEach((c) => {
     if (c.cidadeId && c.cidadeNome) {
@@ -97,14 +94,6 @@ export const RegistroTerritoriosView: React.FC<RegistroTerritoriosViewProps> = (
     }
   });
   const cidadesDisponiveis = Array.from(cidadesMap.values());
-
-  const bairrosMap = new Map<number | string, { id: number | string; nome: string }>();
-  cartoes.forEach((c) => {
-    if (c.bairroId && c.bairroNome) {
-      bairrosMap.set(c.bairroId, { id: c.bairroId, nome: c.bairroNome });
-    }
-  });
-  const bairrosDisponiveis = Array.from(bairrosMap.values());
 
   // Open Edit Modal for a Cartão
   const handleOpenEditModal = (c: Cartao) => {
@@ -297,29 +286,6 @@ export const RegistroTerritoriosView: React.FC<RegistroTerritoriosViewProps> = (
             </select>
           </div>
 
-          {/* Bairro Filter */}
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 text-emerald-500" /> Bairro
-            </label>
-            <select
-              value={bairroFiltro}
-              onChange={(e) => setBairroFiltro(e.target.value)}
-              className={`w-full px-3 py-2 rounded-xl text-xs font-semibold border ${
-                darkMode
-                  ? 'bg-slate-800 border-slate-700 text-white'
-                  : 'bg-slate-50 border-slate-200 text-slate-900'
-              } focus:outline-none focus:ring-2 focus:ring-emerald-500`}
-            >
-              <option value="">Todos os Bairros</option>
-              {bairrosDisponiveis.map((b) => (
-                <option key={b.id} value={String(b.id)}>
-                  {b.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-
           {/* Search Filter */}
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
@@ -444,9 +410,9 @@ export const RegistroTerritoriosView: React.FC<RegistroTerritoriosViewProps> = (
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                        {c.bairroNome && (
+                        {c.cidadeNome && (
                           <span className="block text-[10px] text-slate-600 font-normal truncate">
-                            {c.bairroNome}
+                            {c.cidadeNome}
                           </span>
                         )}
                       </td>

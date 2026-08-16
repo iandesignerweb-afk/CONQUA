@@ -112,7 +112,17 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     data = JSON.parse(responseText);
   } catch (_e) {
     if (!response.ok) {
-      throw new Error(`Erro ${response.status}: ${response.statusText || 'Resposta em formato inválido'}`);
+      // Tentar extrair mensagem limpa se for texto simples
+      const cleanText = responseText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const statusReason =
+        response.status === 403
+          ? 'Permissão negada para esta ação'
+          : response.status === 404
+          ? 'Recurso não encontrado'
+          : response.status === 500
+          ? 'Erro interno do servidor'
+          : response.statusText || 'Erro na requisição';
+      throw new Error(cleanText && cleanText.length < 120 ? `Erro ${response.status}: ${cleanText}` : `Erro ${response.status}: ${statusReason}`);
     }
     data = { message: responseText };
   }

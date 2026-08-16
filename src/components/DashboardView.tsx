@@ -3,7 +3,6 @@ import { DashboardStats } from '../types';
 import { api } from '../services/api';
 import {
   Building2,
-  MapPin,
   Grid3x3,
   CheckCircle2,
   Clock,
@@ -73,7 +72,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Controle de Visitas por Quadras
           </h2>
           <p className="text-xs text-emerald-100 max-w-xl mt-1 leading-relaxed">
-            Acompanhe o andamento em tempo real de todas as cidades e bairros cadastrados.
+            Acompanhe o andamento em tempo real de todas as cidades e quadras cadastradas.
           </p>
         </div>
         <button
@@ -87,7 +86,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* KPI Cards Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
         <div
           className={`p-4 rounded-2xl border transition-colors shadow-sm ${
             darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
@@ -100,20 +99,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <Building2 className="w-4 h-4 text-emerald-500" />
           </div>
           <p className="text-2xl font-black">{stats.totalCidades}</p>
-        </div>
-
-        <div
-          className={`p-4 rounded-2xl border transition-colors shadow-sm ${
-            darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider">
-              Bairros
-            </span>
-            <MapPin className="w-4 h-4 text-emerald-500" />
-          </div>
-          <p className="text-2xl font-black">{stats.totalBairros}</p>
         </div>
 
         <div
@@ -282,38 +267,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
-      </div>
-
-      {/* Top Bairros Progress List */}
-      <div
-        className={`p-6 rounded-2xl border transition-colors shadow-sm ${
-          darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-        }`}
-      >
-        <h3 className="font-bold text-sm mb-4">
-          Bairros com Maior Andamento
-        </h3>
-        <div className="space-y-4">
-          {(stats?.bairrosMaisAvançados || []).map((b, idx) => (
-            <div key={idx} className="space-y-1.5">
-              <div className="flex justify-between items-center text-xs">
-                <span className="font-bold">
-                  {b.bairro}{' '}
-                  <span className="font-normal text-slate-400">({b.cidade})</span>
-                </span>
-                <span className="font-bold text-emerald-500">
-                  {b.concluidas}/{b.total} quadras ({b.percentual}%)
-                </span>
-              </div>
-              <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-emerald-500 h-full rounded-full transition-all duration-300"
-                  style={{ width: `${b.percentual}%` }}
-                />
-              </div>
-            </div>
-          ))}
         </div>
       </div>
     </div>

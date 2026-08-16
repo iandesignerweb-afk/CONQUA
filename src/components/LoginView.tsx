@@ -331,6 +331,34 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   </>
                 )}
               </button>
+
+              <div className="pt-2 text-center">
+                <div className="text-[11px] text-slate-400 mb-1.5 font-medium">Acesso rápido para testes:</div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUsuario('admin');
+                      setSenha('admin123');
+                      setError(null);
+                    }}
+                    className="px-2.5 py-1 bg-slate-900/70 hover:bg-slate-700/80 border border-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-mono transition-colors cursor-pointer"
+                  >
+                    admin <span className="text-slate-500 font-sans">(admin123)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUsuario('carlos');
+                      setSenha('user123');
+                      setError(null);
+                    }}
+                    className="px-2.5 py-1 bg-slate-900/70 hover:bg-slate-700/80 border border-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-mono transition-colors cursor-pointer"
+                  >
+                    carlos <span className="text-slate-500 font-sans">(user123)</span>
+                  </button>
+                </div>
+              </div>
             </form>
           </div>
         )}

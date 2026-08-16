@@ -1,0 +1,93 @@
+{
+  "users": [
+    {
+      "id": "usr_admin",
+      "nome": "Administrador",
+      "usuario": "admin",
+      "email": "admin@quadras.com",
+      "senha_hash": "$2b$10$qghO3zb2ht3y0WB8Gq9UBeF2szmMLbgGe41IEPDKZGaZYEy/Htxfm",
+      "permissao": "Administrador",
+      "created_at": "2026-08-15T14:16:33.370Z",
+      "cidade_configurada": false
+    },
+    {
+      "id": "usr_carlos",
+      "nome": "Carlos Silva",
+      "usuario": "carlos",
+      "email": "carlos@quadras.com",
+      "senha_hash": "$2b$10$rzF.AsoF.1sGAAVUKX80B.e6lZw7p3QsQgX2mwopUgqNl0MYpmXci",
+      "permissao": "Usuário comum",
+      "created_at": "2026-08-15T14:16:33.370Z",
+      "cidade_configurada": false
+    },
+    {
+      "id": "fec26432-7e24-4fa7-9202-8dcd0c880ba5",
+      "nome": "hugo1",
+      "usuario": "hugo1",
+      "email": "iankaue1993@gmail.com",
+      "senha_hash": "$2b$10$qghO3zb2ht3y0WB8Gq9UBeF2szmMLbgGe41IEPDKZGaZYEy/Htxfm",
+      "permissao": "Administrador",
+      "cidade_id": "cid_1786803483187_9egzfg4",
+      "cidade_nome": "Canapi",
+      "cidade_configurada": true,
+      "updated_at": "2026-08-16T20:41:40.077Z"
+    }
+  ],
+  "cidades": [
+    {
+      "id": "cid_1786803483187_9egzfg4",
+      "nome": "Canapi",
+      "estado": "SP",
+      "created_at": "2026-08-15T14:18:03.187+00:00"
+    }
+  ],
+  "bairros": [],
+  "quadras": [],
+  "cartoes": [],
+  "cartao_quadras": [],
+  "cartao_designacoes": [],
+  "historico": [],
+  "audit_logs": [
+    {
+      "usuario_id": "fec26432-7e24-4fa7-9202-8dcd0c880ba5",
+      "usuario_nome": "hugo1",
+      "acao": "Configurou Cidade",
+      "detalhes": "Usuário hugo1 definiu a sua cidade como \"Canapi\".",
+      "ip": "127.0.0.1",
+      "data_hora": "2026-08-16T20:35:13.791Z",
+      "id": "log_1786912513791_9abvaer",
+      "created_at": "2026-08-16T20:35:13.791Z"
+    },
+    {
+      "usuario_id": "fec26432-7e24-4fa7-9202-8dcd0c880ba5",
+      "usuario_nome": "hugo1",
+      "acao": "Configurou Cidade",
+      "detalhes": "Usuário hugo1 definiu a sua cidade como \"Canapi\".",
+      "ip": "127.0.0.1",
+      "data_hora": "2026-08-16T20:41:40.077Z",
+      "id": "log_1786912900077_qmzpgo4",
+      "created_at": "2026-08-16T20:41:40.077Z"
+    },
+    {
+      "usuario_id": "fec26432-7e24-4fa7-9202-8dcd0c880ba5",
+      "usuario_nome": "hugo1",
+      "acao": "Excluiu Usuário",
+      "detalhes": "Excluiu o usuário Ian.",
+      "ip": "127.0.0.1",
+      "data_hora": "2026-08-16T20:44:07.541Z",
+      "id": "log_1786913047541_dscrst0",
+      "created_at": "2026-08-16T20:44:07.541Z"
+    },
+    {
+      "usuario_id": "fec26432-7e24-4fa7-9202-8dcd0c880ba5",
+      "usuario_nome": "hugo1",
+      "acao": "Logout",
+      "detalhes": "Usuário hugo1 fez logout.",
+      "ip": "127.0.0.1",
+      "data_hora": "2026-08-16T20:47:56.428Z",
+      "id": "log_1786913276428_o74683p",
+      "created_at": "2026-08-16T20:47:56.428Z"
+    }
+  ],
+  "registro_territorios": []
+}

@@ -380,6 +380,7 @@ export const UsuariosView: React.FC<UsuariosViewProps> = ({
                   }`}
                 >
                   <option value="Dirigente">Dirigente</option>
+                  <option value="Usuário comum">Usuário comum</option>
                   <option value="Administrador">Administrador</option>
                 </select>
               </div>
